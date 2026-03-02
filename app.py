@@ -2420,6 +2420,215 @@ Annual ancillary revenue estimate: **${annual_rev_anc:,.0f}**
                 except Exception:
                     st.info("Could not fetch audit log.")
 
+        # ── API Documentation (always visible) ───────────────────────────
+        st.markdown("---")
+        with st.expander("API Documentation", expanded=False):
+            st.markdown("""
+### Quick Start
+
+```bash
+# 1. Copy and configure environment variables
+cp .env.example .env
+# Edit .env with your API keys and hardware addresses
+
+# 2. Start the control service
+uvicorn control_service.main:app --port 8400
+
+# 3. Start the dispatch loop (via API)
+curl -X POST http://localhost:8400/start
+```
+
+---
+
+### API Endpoints
+
+All endpoints are served at `http://localhost:8400` (configurable via `GRIDSTACK_SERVICE_PORT`).
+
+#### `GET /health`
+System health: adapter connectivity and loop status.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "loop_running": true,
+  "miner_connected": true,
+  "bess_connected": true,
+  "last_cycle_at": "2024-06-15T14:30:00Z",
+  "uptime_seconds": 3600.0
+}
+```
+
+#### `GET /state`
+Current dispatch mode, LMP, mining/BESS status, and alerts.
+
+**Response:**
+```json
+{
+  "dispatch_mode": "MINE + CHARGE",
+  "current_lmp": 22.50,
+  "current_gen_mw": 0.0,
+  "mining_power_mw": 15.0,
+  "mining_mode": "high",
+  "bess_soc_pct": 45.0,
+  "bess_soc_mwh": 1.71,
+  "bess_mode": "charge",
+  "bess_power_mw": 1.9,
+  "grid_export_mw": 0.0,
+  "grid_import_mw": 16.9,
+  "last_cycle_at": "2024-06-15T14:30:00Z",
+  "cycle_count": 288,
+  "uptime_seconds": 86400.0,
+  "alerts": [],
+  "manual_override_active": false,
+  "loop_running": true
+}
+```
+
+#### `GET /history?hours=24`
+Dispatch history for charting (default: last 24 hours).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | int | 24 | Number of hours of history to return |
+
+#### `GET /audit?limit=100`
+Append-only command audit log (SQLite-backed).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 100 | Number of recent entries to return |
+
+#### `POST /start`
+Start the dispatch loop. The loop runs every 5 minutes (configurable).
+
+#### `POST /stop`
+Gracefully stop the dispatch loop. Sets miners to **sleep** and BESS to **idle** before shutting down.
+
+#### `POST /override`
+Set manual override for miners and/or BESS.
+
+**Request body:**
+```json
+{
+  "miner_mode": "high",
+  "bess_mode": "charge",
+  "bess_power_mw": 1.5
+}
+```
+
+| Field | Options | Description |
+|-------|---------|-------------|
+| `miner_mode` | `auto`, `high`, `low`, `sleep` | Fleet power mode |
+| `bess_mode` | `auto`, `charge`, `discharge`, `idle` | Battery operation mode |
+| `bess_power_mw` | float (optional) | Override power rate in MW |
+
+Set both to `auto` to clear the override.
+
+---
+
+### Miner Integration — Foreman.mn
+
+The Foreman adapter controls Bitcoin mining hardware via the [Foreman](https://foreman.mn) REST API.
+
+**Capabilities:**
+- Read fleet status: total power (MW), hashrate (TH/s), power mode per miner
+- Set fleet power mode: `high` (full power), `low` (reduced), `sleep` (shutdown)
+- Health check via `GET /ping`
+
+**Foreman API endpoints used:**
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/miners` | Read miner fleet status |
+| `POST` | `/actions/power` | Set fleet power mode (`{"mode": "high"}`) |
+| `GET` | `/ping` | Health check |
+
+**Authentication:** `Authorization: {client_id}:{api_key}` header.
+
+**Environment variables:**
+```
+GRIDSTACK_FOREMAN_API_URL=https://dashboard.foreman.mn/api
+GRIDSTACK_FOREMAN_CLIENT_ID=your_client_id
+GRIDSTACK_FOREMAN_API_KEY=your_foreman_api_key
+```
+
+---
+
+### BESS Integration — Battery Management System
+
+Two adapter options for communicating with your BMS:
+
+#### Option A: REST API
+
+Generic REST adapter for any BMS exposing HTTP endpoints.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/status` | Read SOC, power, mode |
+| `POST` | `/command` | Send charge/discharge/idle command |
+
+**Status response format:**
+```json
+{"soc_pct": 72, "soc_mwh": 2.74, "power_mw": 0, "mode": "idle"}
+```
+
+**Command request format:**
+```json
+{"action": "charge", "power_mw": 1.5}
+```
+Actions: `charge`, `discharge`, `idle`
+
+**Environment variables:**
+```
+GRIDSTACK_BESS_ADAPTER_TYPE=rest
+GRIDSTACK_BESS_REST_URL=http://192.168.1.100:8080
+GRIDSTACK_BESS_REST_API_KEY=optional_bearer_token
+```
+
+#### Option B: MQTT
+
+Pub/sub adapter for BMS systems using MQTT (e.g., industrial PLCs, edge gateways).
+
+| Direction | Topic | Payload |
+|-----------|-------|---------|
+| Publish | `bess/command` | `{"action": "charge", "power_mw": 1.5}` |
+| Subscribe | `bess/status` | `{"soc_pct": 72, "soc_mwh": 2.74, "mode": "idle", "power_mw": 0}` |
+
+**Environment variables:**
+```
+GRIDSTACK_BESS_ADAPTER_TYPE=mqtt
+GRIDSTACK_BESS_MQTT_BROKER=192.168.1.100
+GRIDSTACK_BESS_MQTT_PORT=1883
+GRIDSTACK_BESS_MQTT_USERNAME=optional
+GRIDSTACK_BESS_MQTT_PASSWORD=optional
+GRIDSTACK_BESS_MQTT_COMMAND_TOPIC=bess/command
+GRIDSTACK_BESS_MQTT_STATUS_TOPIC=bess/status
+```
+
+---
+
+### Safety System
+
+The safety watchdog monitors adapter health and enforces protective limits:
+
+| Rule | Trigger | Action |
+|------|---------|--------|
+| LMP failsafe | No price data for 3+ cycles | Miners to sleep, BESS to idle |
+| Miner failsafe | Adapter unreachable for 3+ cycles | Alert logged (commands skipped) |
+| BESS failsafe | Adapter unreachable for 3+ cycles | Charge/discharge set to 0 |
+| Min SOC | SOC below 5% | Discharge blocked |
+| Max SOC | SOC above 98% | Charge blocked |
+| Graceful shutdown | `/stop` called | Miners to sleep, BESS to idle |
+
+**Safety environment variables:**
+```
+GRIDSTACK_SAFETY_MAX_CONSECUTIVE_FAILURES=3
+GRIDSTACK_SAFETY_MIN_SOC_PCT=5.0
+GRIDSTACK_SAFETY_MAX_SOC_PCT=98.0
+```
+""")
+
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
