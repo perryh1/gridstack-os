@@ -343,15 +343,17 @@ def render_sidebar() -> dict:
 
         # ── API Keys (optional) ────────────────────────────────────────
         with st.expander("API Settings", expanded=False):
+            _nrel_default = st.secrets.get("NREL_API_KEY", "")
             nrel_key = st.text_input(
                 "NREL API Key",
-                value="",
+                value=_nrel_default,
                 type="password",
                 help="Free at https://developer.nrel.gov — unlocks live PVWatts data.",
             )
+            _gs_default = st.secrets.get("GRIDSTATUS_API_KEY", "")
             gridstatus_key = st.text_input(
                 "GridStatus API Key",
-                value="17fd6eb144fe46afa0c0894453ba867d",
+                value=_gs_default,
                 type="password",
                 help="Free at https://www.gridstatus.io — unlocks live ISO LMP data.",
             )
