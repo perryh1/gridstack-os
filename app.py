@@ -25,6 +25,35 @@ from fpdf import FPDF
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ── Password gate ────────────────────────────────────────────────────────────
+def _check_password():
+    """Return True if the user has entered the correct password."""
+    correct_pw = st.secrets.get("APP_PASSWORD", "")
+    if not correct_pw:
+        return True                       # no password configured → open access
+
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown(
+        "<h1 style='text-align:center;margin-top:15vh'>⚡ GridStack OS</h1>"
+        "<p style='text-align:center;color:grey'>Hybrid BTC Mining + BESS Site Modeler</p>",
+        unsafe_allow_html=True,
+    )
+    with st.form("login_form"):
+        pw = st.text_input("Password", type="password", placeholder="Enter access password")
+        submitted = st.form_submit_button("Log in", use_container_width=True)
+    if submitted:
+        if pw == correct_pw:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
+if not _check_password():
+    st.stop()
+
 
 @st.cache_data(ttl=300)   # cache for 5 minutes
 def fetch_live_hashprice() -> float:
