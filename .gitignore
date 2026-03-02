@@ -22,6 +22,9 @@ env/
 # Streamlit
 .streamlit/secrets.toml
 
+# Control service
+audit.db
+
 # Misc
 *.log
 =0.3.0

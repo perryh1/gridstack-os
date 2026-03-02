@@ -20,39 +20,8 @@ import pandas as pd
 import sys, os
 import re as _re_std
 import urllib.request, ssl as _ssl
-from datetime import date as _date
-from fpdf import FPDF
 
 sys.path.insert(0, os.path.dirname(__file__))
-
-# ── Password gate ────────────────────────────────────────────────────────────
-def _check_password():
-    """Return True if the user has entered the correct password."""
-    correct_pw = st.secrets.get("APP_PASSWORD", "")
-    if not correct_pw:
-        return True                       # no password configured → open access
-
-    if st.session_state.get("authenticated"):
-        return True
-
-    st.markdown(
-        "<h1 style='text-align:center;margin-top:15vh'>⚡ GridStack OS</h1>"
-        "<p style='text-align:center;color:grey'>Hybrid BTC Mining + BESS Site Modeler</p>",
-        unsafe_allow_html=True,
-    )
-    with st.form("login_form"):
-        pw = st.text_input("Password", type="password", placeholder="Enter access password")
-        submitted = st.form_submit_button("Log in", use_container_width=True)
-    if submitted:
-        if pw == correct_pw:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    st.stop()
-
-if not _check_password():
-    st.stop()
 
 
 @st.cache_data(ttl=300)   # cache for 5 minutes
@@ -88,7 +57,6 @@ from config import (
 from modules.data_sources import (
     synthetic_solar_profile, synthetic_wind_profile,
     synthetic_lmp_profile, fetch_pvwatts, get_iso_for_state,
-    load_lmp_gridstatus,
 )
 from modules.calculations import (
     mining_break_even_price, mining_power_mw, mining_revenue_annual,
@@ -100,96 +68,37 @@ from modules.charts import (
     chart_gen_lmp, chart_annual_heatmap, chart_dispatch_stacked,
     chart_revenue_comparison, chart_irr_comparison, chart_capital_allocation,
     chart_duration_curve, chart_electron_value, chart_cumulative_cashflow,
-    chart_tornado, chart_portfolio_irr, chart_portfolio_revenue,
 )
 
 # ─── Custom CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 /* Global */
 html, body, [class*="css"] { font-family: 'Inter', 'Segoe UI', sans-serif; }
 
 /* Sidebar */
 section[data-testid="stSidebar"] {
     background-color: #0D1321;
-    border-right: 1px solid #1E2A45;
+    border-right: 1px solid #2D3556;
 }
 section[data-testid="stSidebar"] .stMarkdown h3 {
-    color: #0EA5E9;
-    font-size: 0.75rem;
-    font-weight: 600;
+    color: #00D4FF;
+    font-size: 0.85rem;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    margin-top: 1.5rem;
-    margin-bottom: 0.5rem;
-    border-bottom: 1px solid #1E2A45;
-    padding-bottom: 6px;
-}
-
-/* Sidebar brand */
-.sidebar-brand {
-    padding: 4px 0 12px 0;
-    border-bottom: 1px solid #1E2A45;
-    margin-bottom: 4px;
-}
-.sidebar-brand h2 {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 700;
-    color: #E8EAF0;
-    letter-spacing: -0.01em;
-}
-.sidebar-brand h2 span { color: #0EA5E9; }
-.sidebar-brand p {
-    margin: 2px 0 0 0;
-    font-size: 0.7rem;
-    color: #64748B;
-    letter-spacing: 0.02em;
-}
-
-/* Sidebar footer */
-.sidebar-footer {
-    border-top: 1px solid #1E2A45;
-    padding-top: 10px;
-    margin-top: 8px;
-    text-align: center;
-}
-.sidebar-footer .version {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: #1E2A45;
-    color: #64748B;
-    font-size: 0.65rem;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-}
-.sidebar-footer .powered {
-    margin-top: 4px;
-    font-size: 0.62rem;
-    color: #475569;
+    letter-spacing: 0.1em;
+    margin-top: 1.2rem;
+    border-bottom: 1px solid #2D3556;
+    padding-bottom: 4px;
 }
 
 /* Metric tiles */
 div[data-testid="metric-container"] {
     background: #161B2E;
-    border: 1px solid #1E2A45;
-    border-radius: 10px;
-    padding: 14px 18px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-    transition: border-color 0.2s ease;
+    border: 1px solid #2D3556;
+    border-radius: 8px;
+    padding: 12px 16px;
 }
-div[data-testid="metric-container"]:hover {
-    border-color: #0EA5E933;
-}
-div[data-testid="metric-container"] label {
-    color: #94A3B8 !important;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
+div[data-testid="metric-container"] label { color: #94A3B8 !important; font-size: 0.78rem; }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
     color: #E8EAF0 !important;
     font-size: 1.5rem !important;
@@ -197,91 +106,39 @@ div[data-testid="metric-container"] [data-testid="stMetricValue"] {
 }
 
 /* Tab headers */
-button[data-baseweb="tab"] {
-    color: #64748B !important;
-    font-weight: 500;
-    font-size: 0.85rem;
-    letter-spacing: 0.01em;
-    transition: color 0.15s ease;
-}
-button[data-baseweb="tab"]:hover {
-    color: #94A3B8 !important;
-}
+button[data-baseweb="tab"] { color: #94A3B8 !important; }
 button[data-baseweb="tab"][aria-selected="true"] {
-    color: #0EA5E9 !important;
-    border-bottom: 2px solid #0EA5E9 !important;
-    font-weight: 600;
+    color: #00D4FF !important;
+    border-bottom: 2px solid #00D4FF !important;
 }
 
 /* DataFrame */
-div[data-testid="stDataFrame"] {
-    border: 1px solid #1E2A45;
-    border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-}
+div[data-testid="stDataFrame"] { border: 1px solid #2D3556; border-radius: 6px; }
 
 /* Alerts */
 div[data-testid="stAlert"] { border-radius: 8px; }
 
-/* Expander headers */
-details summary {
-    font-weight: 500 !important;
-    letter-spacing: 0.01em;
-}
-
 /* Header badge */
 .badge {
     display: inline-block;
-    padding: 3px 12px;
-    border-radius: 6px;
-    font-size: 0.7rem;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.72rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
-    vertical-align: middle;
+    letter-spacing: 0.05em;
 }
-.badge-solar  { background: rgba(250,204,21,0.12); color: #FACC15; border: 1px solid #FACC1530; }
-.badge-wind   { background: rgba(14,165,233,0.12); color: #0EA5E9; border: 1px solid #0EA5E930; }
-.badge-hybrid { background: rgba(52,211,153,0.12); color: #34D399; border: 1px solid #34D39930; }
-
-/* Context bar */
-.context-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: #64748B;
-    font-size: 0.82rem;
-    margin-top: 0;
-    padding: 0;
-}
-.context-bar .sep { color: #334155; }
-
-/* Section heading */
-.section-heading {
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: #E8EAF0;
-    margin: 1.2rem 0 0.6rem 0;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #1E2A45;
-}
+.badge-solar  { background: rgba(255,215,0,0.15);  color: #FFD700; border: 1px solid #FFD70055; }
+.badge-wind   { background: rgba(0,212,255,0.15);  color: #00D4FF; border: 1px solid #00D4FF55; }
+.badge-hybrid { background: rgba(126,232,162,0.15); color: #7EE8A2; border: 1px solid #7EE8A255; }
 
 /* Recommendation box */
 .rec-box {
     background: linear-gradient(135deg, #161B2E, #0D1321);
-    border: 1px solid #0EA5E933;
-    border-left: 4px solid #0EA5E9;
-    border-radius: 10px;
-    padding: 20px 24px;
+    border: 1px solid #00D4FF44;
+    border-left: 4px solid #00D4FF;
+    border-radius: 8px;
+    padding: 16px 20px;
     margin: 12px 0;
-    box-shadow: 0 2px 12px rgba(14,165,233,0.08);
-}
-.rec-box h4 { color: #0EA5E9 !important; }
-
-/* Divider */
-.subtle-divider {
-    border: none;
-    border-top: 1px solid #1E2A45;
-    margin: 1.5rem 0;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -292,16 +149,11 @@ details summary {
 def render_sidebar() -> dict:
     """Render sidebar input widgets and return a dict of user selections."""
     with st.sidebar:
-        st.markdown(
-            '<div class="sidebar-brand">'
-            '<h2><span>Grid</span>Stack OS</h2>'
-            '<p>HYBRID BTC MINING + BESS SITE MODELER</p>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown("## ⚡ GridStack OS")
+        st.caption("Hybrid BTC Mining + BESS Site Modeler")
 
         # ── Location ─────────────────────────────────────────────────────
-        st.markdown("### LOCATION")
+        st.markdown("### 📍 Location")
         _state_opts = sorted(STATE_CITIES.keys())
         state = st.selectbox("State", options=_state_opts, index=42)  # default: Texas
         cities = STATE_CITIES.get(state, ["—"])
@@ -312,7 +164,7 @@ def render_sidebar() -> dict:
         st.caption(f"ISO/RTO: **{iso}**")
 
         # ── Generation ────────────────────────────────────────────────────
-        st.markdown("### GENERATION ASSET")
+        st.markdown("### ☀️ Generation Asset")
         gen_type = st.radio(
             "Resource Type", ["Solar", "Wind", "Hybrid"],
             horizontal=True, index=0,
@@ -349,7 +201,7 @@ def render_sidebar() -> dict:
         )
 
         # ── BTC Miner Settings ────────────────────────────────────────────
-        st.markdown("### BTC MINER")
+        st.markdown("### ⛏️ BTC Miner Parameters")
         efficiency_jth = st.slider(
             "Miner Efficiency (J/TH)", 5.0, 50.0, 18.0, step=0.5,
             help="Joules per terahash — lower = more efficient. S21 XP ≈ 13.5 J/TH.",
@@ -370,30 +222,17 @@ def render_sidebar() -> dict:
             help="Expected daily mining revenue per TH. Auto-loaded from Hashrate Index on startup.",
         )
 
-        # ── API Keys (optional) ────────────────────────────────────────
+        # ── NREL API Key (optional) ──────────────────────────────────────
         with st.expander("API Settings", expanded=False):
-            _nrel_default = st.secrets.get("NREL_API_KEY", "")
             nrel_key = st.text_input(
                 "NREL API Key",
-                value=_nrel_default,
+                value="",
                 type="password",
                 help="Free at https://developer.nrel.gov — unlocks live PVWatts data.",
             )
-            _gs_default = st.secrets.get("GRIDSTATUS_API_KEY", "")
-            gridstatus_key = st.text_input(
-                "GridStatus API Key",
-                value=_gs_default,
-                type="password",
-                help="Free at https://www.gridstatus.io — unlocks live ISO LMP data.",
-            )
 
-        st.markdown(
-            '<div class="sidebar-footer">'
-            '<span class="version">v1.0.0</span>'
-            '<p class="powered">Streamlit + Plotly</p>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown("---")
+        st.caption("v1.0 · Built with Streamlit + Plotly")
 
     return dict(
         state=state, city=city, iso=iso,
@@ -405,7 +244,6 @@ def render_sidebar() -> dict:
         hw_cost_per_th=hw_cost_per_th,
         hashprice=hashprice,
         nrel_key=nrel_key or "DEMO_KEY",
-        gridstatus_key=gridstatus_key,
     )
 
 
@@ -447,11 +285,7 @@ def load_generation(gen_type, solar_frac, capacity_mw, state, city, coupling, nr
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def load_lmp(iso, gen_type, gridstatus_key=""):
-    if gridstatus_key:
-        live = load_lmp_gridstatus(iso, gridstatus_key)
-        if live is not None:
-            return live
+def load_lmp(iso, gen_type):
     return synthetic_lmp_profile(iso, gen_type)
 
 
@@ -659,7 +493,7 @@ def grid_btm_insight(
     lines = []
 
     # ── 1. Current mode headline ──────────────────────────────────────────
-    lines.append(f"#### {mode_str} · {gen_label}")
+    lines.append(f"#### ⚡ {mode_str} · {gen_label}")
     lines.append("")
 
     if grid_tied:
@@ -741,38 +575,38 @@ def grid_btm_insight(
     # ── 3. Contextual call-out ────────────────────────────────────────────
     if grid_tied and gen_type == "Wind":
         lines.append(
-            f"**Wind + Grid-Tied is the strongest miner configuration**: "
+            f"💡 **Wind + Grid-Tied is the strongest miner configuration**: "
             f"overnight negative-LMP windows let the grid *pay you* to run miners, "
             f"while daytime exports capture peak prices wind naturally misses at night."
         )
     elif grid_tied and gen_type == "Solar":
         lines.append(
-            f"**Grid-Tied Solar adds overnight mining**: BESS captures midday solar for "
+            f"💡 **Grid-Tied Solar adds overnight mining**: BESS captures midday solar for "
             f"evening arbitrage while the grid connection lets miners run all night on cheap "
             f"off-peak power — miner utilisation rises from ~{annual_cf:.0%} to ~{mining_util:.0%}."
         )
     elif not grid_tied and gen_type == "Wind":
         lines.append(
-            f"**BTM Wind is still competitive**: wind's **{annual_cf:.0%} CF** means miners "
+            f"💡 **BTM Wind is still competitive**: wind's **{annual_cf:.0%} CF** means miners "
             f"run {mining_util:.0%} of the year even without the grid — comparable to a "
             f"Grid-Tied Solar site. Grid-Tied would push miner uptime to ~{gt_util_est:.0%}."
         )
     elif not grid_tied and gen_type == "Solar":
         lines.append(
-            f"**BTM Solar trades revenue for simplicity**: no interconnection costs or grid "
+            f"💡 **BTM Solar trades revenue for simplicity**: no interconnection costs or grid "
             f"exposure, but miners only run when the sun shines ({mining_util:.0%} utilisation). "
             f"Switching to Grid-Tied could unlock ~{btm_hit_pct:.0f}% more mining revenue."
         )
     elif gen_type == "Hybrid":
         if grid_tied:
             lines.append(
-                f"**Hybrid + Grid-Tied maximises flexibility**: solar provides the BESS arbitrage "
+                f"💡 **Hybrid + Grid-Tied maximises flexibility**: solar provides the BESS arbitrage "
                 f"signal; wind extends mining hours overnight; the grid fills remaining gaps — "
                 f"miners run {mining_util:.0%} of all hours."
             )
         else:
             lines.append(
-                f"**Hybrid BTM smooths the BTM penalty**: the wind component keeps miners running "
+                f"💡 **Hybrid BTM smooths the BTM penalty**: the wind component keeps miners running "
                 f"overnight even without grid import, softening the revenue hit vs pure solar BTM. "
                 f"Grid-Tied would push uptime from {mining_util:.0%} to ~{gt_util_est:.0%}."
             )
@@ -840,290 +674,9 @@ def render_financial_inputs() -> dict:
     return {"itc_rate": itc_rate, "budget": budget}
 
 
-# ─── PDF Export ──────────────────────────────────────────────────────────────
-
-def generate_executive_pdf(inp, iso, hybrid_irr, total_annual_rev,
-                           rec_text, bess_n, preset, bess_cost,
-                           miner_budget, mining_th, itc_rate,
-                           itc_savings_bess, budget, irr_str,
-                           bess_power_mw, bess_energy) -> bytes:
-    """Generate a 1-page executive summary PDF and return raw bytes."""
-    def _ascii(text: str) -> str:
-        """Replace common Unicode chars with ASCII for Helvetica compatibility."""
-        return (text
-                .replace("\u2014", "--")   # em-dash
-                .replace("\u2013", "-")    # en-dash
-                .replace("\u2018", "'")    # left single quote
-                .replace("\u2019", "'")    # right single quote
-                .replace("\u201c", '"')    # left double quote
-                .replace("\u201d", '"')    # right double quote
-                .replace("\u2026", "...")  # ellipsis
-                .replace("\u00b7", "-")    # middle dot
-                .replace("\u2022", "-")    # bullet
-                .replace("\u00d7", "x")    # multiplication sign
-                .replace("\u2248", "~")    # approx
-                )
-
-    pdf = FPDF(orientation="P", unit="mm", format="Letter")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    # ── Colors ──
-    DARK = (14, 17, 23)
-    ACCENT = (14, 165, 233)
-    WHITE = (232, 234, 240)
-    MUTED = (148, 163, 184)
-    CARD_BG = (22, 27, 46)
-
-    # ── Background ──
-    pdf.set_fill_color(*DARK)
-    pdf.rect(0, 0, 216, 280, "F")
-
-    # ── Header ──
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_text_color(*ACCENT)
-    pdf.cell(0, 10, "GRIDSTACK OS", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(*MUTED)
-    _conn = "Grid-Tied" if inp["grid_tied"] else "BTM"
-    pdf.cell(0, 5,
-             _ascii(f"Executive Summary  |  {inp['city']}, {inp['state']}  |  "
-                    f"{inp['capacity_mw']} MW {inp['gen_type']}  |  {_conn}  |  {iso}"),
-             new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 5, f"Generated {_date.today().isoformat()}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(3)
-
-    # ── Divider ──
-    def draw_divider():
-        pdf.set_draw_color(*ACCENT)
-        pdf.set_line_width(0.3)
-        pdf.line(10, pdf.get_y(), 206, pdf.get_y())
-        pdf.ln(4)
-
-    draw_divider()
-
-    # ── Section helper ──
-    def section_title(title):
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(*ACCENT)
-        pdf.cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
-
-    # ── KEY METRICS ──
-    section_title("KEY METRICS")
-    kpi_w = 47
-    kpi_h = 16
-
-    irr_val = hybrid_irr.get("irr")
-    payback = hybrid_irr.get("payback_years", "N/A")
-    npv = hybrid_irr.get("npv_8pct", 0)
-
-    kpis = [
-        ("Blended IRR", irr_str),
-        ("Payback Period", f"{payback} yrs" if isinstance(payback, (int, float)) else str(payback)),
-        ("Annual Revenue", f"${total_annual_rev:,.0f}"),
-        ("NPV @ 8%", f"${npv / 1e6:.2f}M"),
-    ]
-
-    for label, value in kpis:
-        pdf.set_fill_color(*CARD_BG)
-        pdf.set_draw_color(30, 42, 69)
-        x0 = pdf.get_x()
-        y0 = pdf.get_y()
-        pdf.rect(x0, y0, kpi_w, kpi_h, "DF")
-        pdf.set_xy(x0 + 3, y0 + 2)
-        pdf.set_font("Helvetica", "", 7)
-        pdf.set_text_color(*MUTED)
-        pdf.cell(kpi_w - 6, 4, label)
-        pdf.set_xy(x0 + 3, y0 + 7)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.set_text_color(*WHITE)
-        pdf.cell(kpi_w - 6, 7, value)
-        pdf.set_xy(x0 + kpi_w + 1, y0)
-
-    pdf.ln(kpi_h + 4)
-    draw_divider()
-
-    # ── RECOMMENDED STRATEGY ──
-    section_title("RECOMMENDED STRATEGY")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(*WHITE)
-    # Strip markdown bold markers and sanitize for PDF
-    clean_rec = _ascii(rec_text.replace("**", "").replace("*", ""))
-    pdf.multi_cell(0, 5, clean_rec)
-    pdf.ln(3)
-    draw_divider()
-
-    # ── CAPITAL ALLOCATION ──
-    section_title("CAPITAL ALLOCATION")
-    bess_pct = bess_cost / budget * 100 if budget > 0 else 0
-    miner_pct = miner_budget / budget * 100 if budget > 0 else 0
-
-    alloc_data = [
-        ("BESS (Megapacks)", f"${bess_cost / 1e6:.2f}M", f"{bess_pct:.1f}%"),
-        ("BTC Miners", f"${miner_budget / 1e6:.2f}M", f"{miner_pct:.1f}%"),
-        ("ITC Savings", f"${itc_savings_bess / 1e6:.2f}M", f"{itc_rate:.0%} rate"),
-    ]
-    col_widths = [70, 40, 40]
-    # Header row
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_text_color(*MUTED)
-    pdf.set_fill_color(*CARD_BG)
-    for w, h in zip(col_widths, ["Category", "Amount", "Share"]):
-        pdf.cell(w, 6, h, border=0, fill=True)
-    pdf.ln()
-    # Data rows
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(*WHITE)
-    for cat, amt, share in alloc_data:
-        pdf.cell(col_widths[0], 6, cat, border=0)
-        pdf.cell(col_widths[1], 6, amt, border=0)
-        pdf.cell(col_widths[2], 6, share, border=0)
-        pdf.ln()
-
-    pdf.ln(3)
-    draw_divider()
-
-    # ── DEPLOYMENT SUMMARY ──
-    section_title("DEPLOYMENT SUMMARY")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(*WHITE)
-    lines = [
-        f"Total Budget: ${budget / 1e6:.1f}M across a {inp['gen_type']} hybrid site",
-        f"BESS: {bess_n} x {preset['label']} Megapacks ({bess_power_mw:.1f} MW / {bess_energy:.1f} MWh) -- ${bess_cost / 1e6:.2f}M",
-        f"Mining: {mining_th:,.0f} TH at {inp['efficiency_jth']} J/TH -- ${miner_budget / 1e6:.2f}M",
-        f"ITC: {itc_rate:.0%} reduces effective BESS CapEx by ${itc_savings_bess / 1e6:.2f}M",
-        f"Projected Blended IRR: {irr_str} | Annual Revenue: ${total_annual_rev:,.0f}",
-    ]
-    for line in lines:
-        pdf.cell(0, 5.5, _ascii(line), new_x="LMARGIN", new_y="NEXT")
-
-    # ── Footer ──
-    pdf.set_y(-20)
-    pdf.set_font("Helvetica", "", 7)
-    pdf.set_text_color(*MUTED)
-    pdf.cell(0, 4, f"GridStack OS v1.0.0  |  Generated {_date.today().isoformat()}", align="C")
-
-    return bytes(pdf.output())
-
-
-# ─── Sensitivity Engine ──────────────────────────────────────────────────────
-
-def run_sensitivity(inp, iso, gen_mwh, lmp_mwh, gen_data, lmp_data,
-                    budget, itc_rate, pack_key, bess_split,
-                    ancillary_premium, dsumm, bess_n, preset,
-                    bess_cost, miner_budget, mining_th, mine_power,
-                    be_price_mwh, annual_rev_grid, annual_rev_bess,
-                    annual_rev_anc, annual_rev_import, hybrid_irr_base):
-    """
-    Run IRR sensitivity across 8 key variables.
-    Returns list of dicts for the tornado chart.
-    """
-    base_irr = hybrid_irr_base.get("irr") or 0
-
-    def _irr_for_financial(hp=None, hw=None, bgt=None, itc=None,
-                           eff=None, rev_bess_mult=1.0, anc_mult=1.0):
-        """Re-run financial model with overridden parameters."""
-        _hp  = hp  if hp  is not None else inp["hashprice"]
-        _hw  = hw  if hw  is not None else inp["hw_cost_per_th"]
-        _bgt = bgt if bgt is not None else budget
-        _itc = itc if itc is not None else itc_rate
-        _eff = eff if eff is not None else inp["efficiency_jth"]
-
-        # Re-allocate capital if budget or hw changed
-        _alloc = allocate_capital(
-            _bgt, inp["gen_type"], pack_key, _hw, _eff, _hp, _itc, bess_split,
-        )
-        _bess_n = _alloc["n_packs"]
-        _bess_cost = _alloc["bess_cost"]
-        _miner_budget = _alloc["mining_cost"]
-        _mining_th = _miner_budget / _hw if _hw > 0 else 0
-        _preset = MEGAPACK_PRESETS[pack_key]
-
-        # Scale dispatch-dependent revenues
-        _rev_bess = annual_rev_bess * rev_bess_mult
-        _rev_anc  = annual_rev_anc * anc_mult
-        _rev_mine = mining_revenue_annual(_mining_th, _hp) * dsumm["mining_utilization"]
-
-        _cfs = build_annual_cashflows(
-            gen_type=inp["gen_type"],
-            solar_frac=inp["solar_frac"],
-            capacity_mw=inp["capacity_mw"],
-            hashrate_th=_mining_th,
-            hashprice_per_th_day=_hp,
-            efficiency_jth=_eff,
-            bess_packs=_bess_n,
-            pack_preset=_preset,
-            ancillary_premium=ancillary_premium * anc_mult,
-            annual_rev_grid=annual_rev_grid,
-            annual_rev_bess=_rev_bess,
-            annual_rev_ancillary=_rev_anc,
-            annual_rev_import=annual_rev_import,
-            itc_rate=_itc,
-        )
-        result = compute_irr_roi(_bgt, _cfs["hybrid_cfs"], _itc)
-        return result.get("irr") or 0
-
-    # Define sensitivity sweeps
-    hp = inp["hashprice"]
-    bgt = budget
-    itc = itc_rate
-    hw = inp["hw_cost_per_th"]
-    eff = inp["efficiency_jth"]
-
-    sweeps = [
-        {
-            "name": "Hashprice ($/TH/day)",
-            "low_irr":  _irr_for_financial(hp=hp * 0.70),
-            "high_irr": _irr_for_financial(hp=hp * 1.30),
-        },
-        {
-            "name": "Total Budget ($M)",
-            "low_irr":  _irr_for_financial(bgt=bgt * 0.70),
-            "high_irr": _irr_for_financial(bgt=bgt * 1.30),
-        },
-        {
-            "name": "ITC Rate (%)",
-            "low_irr":  _irr_for_financial(itc=max(0, itc - 0.10)),
-            "high_irr": _irr_for_financial(itc=min(0.60, itc + 0.10)),
-        },
-        {
-            "name": "Hardware Cost ($/TH)",
-            "low_irr":  _irr_for_financial(hw=hw * 1.25),   # higher cost = worse
-            "high_irr": _irr_for_financial(hw=hw * 0.75),   # lower cost = better
-        },
-        {
-            "name": "Miner Efficiency (J/TH)",
-            "low_irr":  _irr_for_financial(eff=eff * 1.15),  # worse efficiency
-            "high_irr": _irr_for_financial(eff=eff * 0.85),  # better efficiency
-        },
-        {
-            "name": "BESS Arb. Revenue",
-            "low_irr":  _irr_for_financial(rev_bess_mult=0.75),
-            "high_irr": _irr_for_financial(rev_bess_mult=1.25),
-        },
-        {
-            "name": "Ancillary Premium ($/MWh)",
-            "low_irr":  _irr_for_financial(anc_mult=0.60),
-            "high_irr": _irr_for_financial(anc_mult=1.40),
-        },
-        {
-            "name": "Generation Capacity (MW)",
-            "low_irr":  _irr_for_financial(bgt=bgt * 0.80),  # proxy: smaller site
-            "high_irr": _irr_for_financial(bgt=bgt * 1.20),  # proxy: larger site
-        },
-    ]
-
-    return sweeps, base_irr
-
-
 # ─── Main App ─────────────────────────────────────────────────────────────────
 
 def main():
-    # ── Portfolio session state ───────────────────────────────────────────
-    if "portfolio" not in st.session_state:
-        st.session_state.portfolio = []
-
     # ══════════════════════════════════════════════════════════════════════
     # PHASE 1: Sidebar inputs (slim)
     # ══════════════════════════════════════════════════════════════════════
@@ -1137,7 +690,7 @@ def main():
             inp["gen_type"], inp["solar_frac"], inp["capacity_mw"], inp["state"],
             inp["city"], inp["coupling"], inp["nrel_key"],
         )
-        lmp_data = load_lmp(inp["iso"], inp["gen_type"], inp.get("gridstatus_key", ""))
+        lmp_data = load_lmp(inp["iso"], inp["gen_type"])
 
     gen_mwh  = gen_data["generation_mwh"]
     lmp_mwh  = lmp_data["lmp_mwh"]
@@ -1151,111 +704,24 @@ def main():
     # ══════════════════════════════════════════════════════════════════════
     # PHASE 3: Header + Data Disclosure
     # ══════════════════════════════════════════════════════════════════════
-    _badge_cls = "solar" if inp["gen_type"] == "Solar" else ("wind" if inp["gen_type"] == "Wind" else "hybrid")
-    _badge_lbl = inp["gen_type"] if inp["gen_type"] != "Hybrid" else f"Hybrid {int(inp['solar_frac']*100)}S / {int((1-inp['solar_frac'])*100)}W"
+    _badge_cls = "solar" if inp["gen_type"] == "Solar" else ("wind" if inp["gen_type"] == "Wind" else "solar")
+    _badge_lbl = inp["gen_type"] if inp["gen_type"] != "Hybrid" else f"Hybrid ☀️{int(inp['solar_frac']*100)}% 💨{int((1-inp['solar_frac'])*100)}%"
     gen_badge = f'<span class="badge badge-{_badge_cls}">{_badge_lbl}</span>'
-    _conn = "Grid-Tied" if inp["grid_tied"] else "BTM"
     st.markdown(
-        f'<h1 style="margin-bottom:2px;font-weight:700;letter-spacing:-0.02em">'
-        f'<span style="color:#0EA5E9">Grid</span>Stack OS '
+        f'<h1 style="margin-bottom:4px">GridStack OS '
         f'{gen_badge}</h1>'
-        f'<div class="context-bar">'
-        f'{inp["city"]}, {inp["state"]}'
-        f'<span class="sep">/</span>'
-        f'{inp["capacity_mw"]} MW {inp["gen_type"]}'
-        f'<span class="sep">/</span>'
-        f'{_conn}'
-        f'<span class="sep">/</span>'
-        f'{iso}'
-        f'</div>',
+        f'<p style="color:#94A3B8;margin-top:0">'
+        f'{inp["city"]}, {inp["state"]} · {inp["capacity_mw"]} MW · ISO: {iso}</p>',
         unsafe_allow_html=True,
     )
 
-    # ── How It Works — onboarding guide for new users ─────────────────────
-    with st.expander("How It Works — New User Guide", expanded=False):
-        st.markdown("""
-**What is GridStack OS?**
-
-GridStack OS models the economics of co-locating **solar or wind generation** with
-**Bitcoin miners** and **battery storage (BESS)** at a single site. Instead of
-selling all your power to the grid at volatile wholesale prices, the app
-simulates a *synergy dispatch* strategy that stacks **four revenue streams**:
-
-1. **Grid Export** — sell surplus generation at market price (LMP)
-2. **BTC Mining** — convert cheap or curtailed electricity into Bitcoin
-3. **BESS Arbitrage** — charge batteries when prices are low, discharge when high
-4. **Ancillary Services** — earn standby revenue from frequency regulation markets
-
-The model runs an **8,760-hour dispatch simulation** (one full year, hour-by-hour)
-to calculate blended IRR, payback period, and total annual revenue for your
-specific site configuration.
-
----
-
-**Getting Started**
-
-1. **Configure your site** in the left sidebar — pick a state & city, choose
-   solar/wind/hybrid, set capacity, and enter your miner hardware specs.
-   The budget slider controls how capital is split between BESS and miners.
-2. **Review the Executive Summary** (Tab 1) for headline financials — IRR,
-   payback period, total revenue, and the recommended BESS/miner split.
-3. **Explore the other tabs** for deeper analysis — generation profiles,
-   hourly dispatch operations, financial breakdowns, sensitivity, and
-   multi-site portfolio comparison.
-
----
-
-**What Each Tab Shows**
-
-| Tab | What It Shows | Key Metric |
-|-----|--------------|------------|
-| **Executive Summary** | Top-line financials, recommended strategy, capital allocation | Blended IRR, Payback Period |
-| **Site & Generation** | Solar/wind generation profile, LMP heatmap, hourly revenue | Capacity Factor, Avg LMP |
-| **Dispatch & Operations** | BESS config, dispatch rules, hourly operational data, 7/30-day performance | Hybrid Uplift vs generation-only |
-| **Financials & Allocation** | ITC tax credits, budget split, 25-year cashflows, ancillary revenue | Net BESS CapEx after ITC |
-| **Sensitivity** | Tornado chart — which inputs move IRR the most | Top 3 IRR drivers |
-| **Portfolio** | Save & compare up to 3 site configurations side by side | Best IRR across sites |
-
----
-
-**Key Terms**
-
-| Term | Definition |
-|------|-----------|
-| **LMP** | Locational Marginal Price — the wholesale electricity price at a specific grid node, updated hourly |
-| **BESS** | Battery Energy Storage System — grid-scale lithium-ion batteries (Tesla Megapack in this model) |
-| **BTM** | Behind-the-Meter — site is not connected to the grid; all power consumed on-site |
-| **Grid-Tied** | Site can import from and export to the grid — enables 24/7 mining and grid arbitrage |
-| **ITC** | Investment Tax Credit — 30%+ federal tax credit for solar + storage under IRA Section 48E |
-| **Synergy Dispatch** | The hour-by-hour algorithm that decides whether to export, mine, charge BESS, or curtail |
-| **Ancillary Services** | Revenue from providing grid stability (frequency regulation, spinning reserves) |
-| **Hashprice** | Bitcoin mining revenue per terahash per day ($/TH/day) — tracks mining profitability |
-| **J/TH** | Joules per Terahash — miner energy efficiency (lower = more efficient; S21 XP ≈ 13.5) |
-| **Capacity Factor** | Fraction of time a generator produces at full output (solar ≈ 20-30%, wind ≈ 25-45%) |
-| **Megapack** | Tesla's utility-scale battery product — comes in 2hr and 4hr duration configurations |
-| **IRR** | Internal Rate of Return — the annualised return on invested capital over the project life |
-""")
-
-    _lmp_is_live = lmp_data.get("source", "").startswith("gridstatus.io")
-    if _lmp_is_live:
-        _lmp_method = (
-            "Live day-ahead hourly LMP fetched from gridstatus.io API. "
-            "Data covers the trailing 12 months for the selected ISO hub."
-        )
-        _lmp_ref = f"gridstatus.io ({iso} market data); verified against ISO public dashboards."
-    else:
-        _lmp_method = (
-            "Synthetic hourly LMP profile modelled from ISO-level historical averages, "
-            "peak/off-peak ratios, negative-price frequency, and scarcity-spike distributions."
-        )
-        _lmp_ref = f"EIA Electric Power Monthly (2022–2023); {iso} annual market reports."
-
-    with st.expander("Data Sources & Disclosure", expanded=False):
+    with st.expander("📋 Data Sources & Disclosure (expand before using results)", expanded=False):
         st.markdown(f"""
 **Electricity Pricing Data**
 - Source: {lmp_data['source']}
-- Methodology: {_lmp_method}
-- Reference: {_lmp_ref}
+- Methodology: Synthetic hourly LMP profile modelled from ISO-level historical averages,
+  peak/off-peak ratios, negative-price frequency, and scarcity-spike distributions.
+- Reference: EIA Electric Power Monthly (2022–2023); {iso} annual market reports.
 
 **Solar/Wind Generation Data**
 - Source: {gen_data['source']}
@@ -1263,31 +729,23 @@ specific site configuration.
 - Reference: NREL National Solar Radiation Database (NSRDB); NREL Wind Toolkit (WTK).
 
 **Bitcoin Network Data**
-- Hashprice: User-supplied (${inp['hashprice']:.3f}/TH/day). Track live at hashrateindex.com.
+- Hashprice: User-supplied (${inp['hashprice']:.3f}/TH/day). Track live at hashrateidex.com.
 - Miner efficiency: User-supplied ({inp['efficiency_jth']} J/TH).
 
-**BESS & ITC**
-- Megapack specs: Tesla public filings (Pack 1: 1.9 MW/2hr, Pack 2: 1.0 MW/4hr).
-- ITC: 30% base rate (IRA Section 48E) + domestic content and energy community adders.
-- Ancillary premium: {iso} FERC/ISO market reports (2022–2023 average).
-
-**Disclaimer:** All revenue projections are estimates based on {'live market data' if _lmp_is_live else 'historical data'} and model assumptions.
-{'Live LMP data reflects recent market conditions but does not guarantee future prices.' if _lmp_is_live else 'Past LMP patterns do not guarantee future results.'} This tool does not constitute financial or tax advice.
+**Disclaimer:** All revenue projections are estimates based on historical data and model assumptions.
+Past LMP patterns do not guarantee future results. This tool does not constitute financial or tax advice.
         """)
 
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════════════════════
-    # PHASE 4: Create 6 tabs
+    # PHASE 4: Create 4 tabs
     # ══════════════════════════════════════════════════════════════════════
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Executive Summary",
         "Site & Generation",
         "Dispatch & Operations",
         "Financials & Allocation",
-        "Sensitivity",
-        "Portfolio",
-        "Live Control",
     ])
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1361,11 +819,6 @@ specific site configuration.
             dc_avail_mwh=gen_data.get("bess_dc_avail_mwh"),
             grid_tied=inp["grid_tied"],
         )
-        # Backfill hourly mining revenue (hashrate × hashprice prorated by utilisation)
-        if mine_power > 0 and mining_th > 0:
-            _hourly_hp = inp["hashprice"] / 24.0          # $/TH per hour
-            _frac = dispatch_df["mining_mw"] / mine_power  # fraction of fleet running
-            dispatch_df["rev_mining"] = _frac * mining_th * _hourly_hp
         dsumm = dispatch_summary(dispatch_df)
 
     annual_rev_grid = dsumm["total_rev_grid"]
@@ -1441,30 +894,12 @@ specific site configuration.
 
     # ── TAB 1: EXECUTIVE SUMMARY ─────────────────────────────────────────
     with tab1:
-        # Scenario context bar + download button
+        # Scenario context bar
         grid_mode = "Grid-Tied" if inp["grid_tied"] else "BTM"
-        _ctx_col, _dl_col = st.columns([5, 1])
-        with _ctx_col:
-            st.markdown(
-                f"**{inp['city']}, {inp['state']}** · {inp['capacity_mw']} MW {inp['gen_type']} · "
-                f"{grid_mode} · ${budget / 1e6:.1f}M Budget"
-            )
-        with _dl_col:
-            _pdf_bytes = generate_executive_pdf(
-                inp=inp, iso=iso, hybrid_irr=hybrid_irr,
-                total_annual_rev=total_annual_rev, rec_text=rec_text,
-                bess_n=bess_n, preset=preset, bess_cost=bess_cost,
-                miner_budget=miner_budget, mining_th=mining_th,
-                itc_rate=itc_rate, itc_savings_bess=itc_savings_bess,
-                budget=budget, irr_str=fmt_irr(hybrid_irr["irr"]),
-                bess_power_mw=bess_power_mw, bess_energy=bess_energy,
-            )
-            st.download_button(
-                "Download PDF",
-                data=_pdf_bytes,
-                file_name="gridstack-executive-summary.pdf",
-                mime="application/pdf",
-            )
+        st.markdown(
+            f"**{inp['city']}, {inp['state']}** · {inp['capacity_mw']} MW {inp['gen_type']} · "
+            f"{grid_mode} · ${budget / 1e6:.1f}M Budget"
+        )
 
         # Top KPI row
         c1, c2, c3, c4 = st.columns(4)
@@ -1493,7 +928,7 @@ specific site configuration.
             st.subheader("Capital Allocation")
             st.plotly_chart(
                 chart_capital_allocation(bess_cost, miner_budget),
-                use_container_width=True, key="exec_cap_alloc",
+                use_container_width=True,
             )
         with col_ev:
             st.subheader("Highest Value of an Electron")
@@ -1501,14 +936,14 @@ specific site configuration.
 
         # Revenue Stack comparison
         st.subheader("Revenue Comparison by Strategy")
-        st.plotly_chart(chart_revenue_comparison(rev_scenario), use_container_width=True, key="exec_rev_comp")
+        st.plotly_chart(chart_revenue_comparison(rev_scenario), use_container_width=True)
 
         # Condensed recommendation
         hybrid_irr_val = hybrid_irr["irr"]
         irr_str = f"{hybrid_irr_val * 100:.1f}%" if hybrid_irr_val else "N/A"
         st.markdown(f"""
 <div class="rec-box">
-<h4 style="color:#0EA5E9;margin-top:0">Deployment Summary</h4>
+<h4 style="color:#00D4FF;margin-top:0">Deployment Summary</h4>
 <b>${budget / 1e6:.1f}M</b> across a <b>{inp['gen_type']}</b> site →
 <b>{bess_n} × {preset['label']} Megapacks</b> (${bess_cost / 1e6:.2f}M) +
 <b>{mining_th:,.0f} TH</b> mining (${miner_budget / 1e6:.2f}M).
@@ -1517,32 +952,23 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
 </div>
         """, unsafe_allow_html=True)
 
-        # ── Model Confidence & Methodology ───────────────────────────────
-        lmp_is_live = lmp_data.get("source", "").startswith("gridstatus.io")
-        lmp_conf = "High" if lmp_is_live else "Medium"
-        lmp_src = "gridstatus.io live ISO data" if lmp_is_live else "Synthetic model calibrated to EIA 2022-2023"
-        with st.expander("Model Confidence & Methodology", expanded=False):
-            st.markdown(f"""
-| Input | Confidence | Source |
-|-------|-----------|--------|
-| Solar/Wind Capacity Factor | High | NREL PVWatts / Wind Toolkit |
-| LMP Profile | {lmp_conf} | {lmp_src} |
-| Bitcoin Hashprice | High | User-supplied, verifiable at Hashrate Index |
-| Megapack Specs & Cost | High | Tesla public filings |
-| ITC Rate (30% + adders) | High | IRA Section 48E statutory rate |
-| Miner Efficiency / Cost | High | User-supplied hardware spec |
-| Ancillary Service Premium | Medium | FERC/ISO market reports (2022-2023 avg) |
-| BESS Arbitrage Dispatch | Medium | Deterministic rule-based model |
-| 25-Year Flat Cashflows | Low | No escalation, degradation simplified |
-| Grid Export Revenue | Medium | Assumes merchant pricing, no PPA |
-
-**High** = verifiable from a named public source.
-**Medium** = calibrated to public data but uses modeled assumptions.
-**Low** = simplifying assumption that may diverge from reality.
-            """)
-
     # ── TAB 2: SITE & GENERATION ─────────────────────────────────────────
     with tab2:
+        # Annual Generation Heatmap
+        st.subheader("Annual Generation Heatmap")
+        heatmap_choice = st.radio(
+            "View", ["Generation (MWh)", "LMP ($/MWh)"],
+            horizontal=True, label_visibility="collapsed",
+        )
+        if heatmap_choice == "Generation (MWh)":
+            color = "YlOrRd" if inp["gen_type"] == "Solar" else ("Purples" if inp["gen_type"] == "Hybrid" else "Blues")
+            fig_hm = chart_annual_heatmap(gen_mwh, "Generation Heatmap (MWh/hour)", color, "MWh")
+        else:
+            fig_hm = chart_annual_heatmap(lmp_mwh, f"{iso} LMP Heatmap ($/MWh)", "RdYlGn", "$/MWh")
+        st.plotly_chart(fig_hm, use_container_width=True)
+
+        st.markdown("---")
+
         # Generation Profile vs. LMP
         st.subheader("Generation Profile vs. LMP")
         season_map = {"Spring (Apr)": 24*90, "Summer (Jul)": 24*180,
@@ -1598,23 +1024,7 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
 
         st.markdown("---")
 
-        # Annual Heatmap (reference view)
-        with st.expander("Annual Heatmap (hour × day)", expanded=False):
-            heatmap_choice = st.radio(
-                "View", ["Generation (MWh)", "LMP ($/MWh)"],
-                horizontal=True, label_visibility="collapsed",
-            )
-            if heatmap_choice == "Generation (MWh)":
-                color = "YlOrRd" if inp["gen_type"] == "Solar" else ("Purples" if inp["gen_type"] == "Hybrid" else "Blues")
-                fig_hm = chart_annual_heatmap(gen_mwh, "Generation Heatmap (MWh/hour)", color, "MWh")
-            else:
-                fig_hm = chart_annual_heatmap(lmp_mwh, f"{iso} LMP Heatmap ($/MWh)", "RdYlGn", "$/MWh")
-            st.plotly_chart(fig_hm, use_container_width=True)
-
-    # ── TAB 3: DISPATCH & OPERATIONS ─────────────────────────────────────
-    # (BESS inputs were already rendered in Phase 5 above the ---  divider)
-    with tab3:
-        # Grid Connection & Dispatch Insight (prominent, expanded by default)
+        # Grid Connection & Dispatch Insight
         insight_md = grid_btm_insight(
             gen_type=inp["gen_type"],
             solar_frac=inp["solar_frac"],
@@ -1629,16 +1039,19 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
             bess_split=bess_split,
             mine_split=mine_split,
         )
-        with st.expander("Grid Connection & Dispatch Insight", expanded=True):
+        with st.expander("⚡ Grid Connection & Dispatch Insight", expanded=True):
             st.markdown(insight_md)
 
+    # ── TAB 3: DISPATCH & OPERATIONS ─────────────────────────────────────
+    # (BESS inputs were already rendered in Phase 5 above the ---  divider)
+    with tab3:
         # BESS Pack Rationale
-        with st.expander("BESS Pack Selection — why this config?", expanded=False):
+        with st.expander("🔋 BESS Pack Selection — why this config?", expanded=False):
             st.markdown(pack_rationale)
 
         # Dispatch rules
         st.subheader("Synergy Priority Dispatch Simulation")
-        with st.expander("Dispatch Rules Applied", expanded=True):
+        with st.expander("📖 Dispatch Rules Applied", expanded=True):
             st.markdown(f"""
 | Priority | Condition | Action |
 |----------|-----------|--------|
@@ -1706,87 +1119,19 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
             )
 
         st.markdown("---")
-
-        # ── Period summaries: 7-day and 30-day ──────────────────────────────
-        def _period_stats(df, n_hours):
-            """Compute summary stats for the last *n_hours* of dispatch_df."""
-            chunk = df.tail(n_hours)
-            total_rev = (
-                chunk["rev_grid"].sum()
-                + chunk["rev_bess"].sum()
-                + chunk["rev_ancillary"].sum()
-                + chunk["rev_mining"].sum()
-                + chunk["rev_import"].sum()
-            )
-            # Baseline: generation-only (sell all power at LMP, curtail at neg prices)
-            _gen_x_lmp = chunk["generation_mwh"] * chunk["lmp"]
-            baseline_rev = float(_gen_x_lmp[_gen_x_lmp > 0].sum())
-            return {
-                "gen":       chunk["generation_mwh"].sum(),
-                "avg_lmp":   chunk["lmp"].mean(),
-                "grid_exp":  chunk["grid_export_mwh"].sum(),
-                "grid_imp":  chunk["grid_import_mwh"].sum(),
-                "mining":    chunk["rev_mining"].sum(),
-                "bess":      chunk["rev_bess"].sum(),
-                "ancillary": chunk["rev_ancillary"].sum(),
-                "total_rev": total_rev,
-                "baseline":  baseline_rev,
-                "delta":     total_rev - baseline_rev,
-            }
-
-        _s7  = _period_stats(dispatch_df, 168)   # 7 days
-        _s30 = _period_stats(dispatch_df, 720)   # 30 days
-
-        st.subheader("Dispatch Performance")
-
-        def _render_period(label, s):
-            st.markdown(f"##### {label}")
-            _a1, _a2, _a3 = st.columns(3)
-            _a1.metric("Hybrid Revenue",        f"${s['total_rev']:,.0f}")
-            _a2.metric("Generation-Only Rev",   f"${s['baseline']:,.0f}",
-                        help="Baseline: sell all generation at LMP, curtail during negative prices. No BESS, no miners.")
-            _delta_pct = (s['delta'] / s['baseline'] * 100) if s['baseline'] > 0 else 0
-            _a3.metric("Hybrid Uplift",         f"${s['delta']:,.0f}",
-                        delta=f"+{_delta_pct:,.0f}%")
-            _b1, _b2, _b3, _b4, _b5 = st.columns(5)
-            _b1.metric("Mining Rev",          f"${s['mining']:,.0f}")
-            _b2.metric("BESS Rev",            f"${s['bess']:,.0f}")
-            _b3.metric("Ancillary Rev",       f"${s['ancillary']:,.0f}")
-            _b4.metric("Avg LMP ($/MWh)",     f"${s['avg_lmp']:.2f}")
-            _b5.metric("Generation (MWh)",    f"{s['gen']:,.0f}")
-
-        _render_period("Previous 7 Days (168 h)", _s7)
-        _render_period("Previous 30 Days (720 h)", _s30)
-
-        # ── Raw table (last 168 hours) ──────────────────────────────────────
-        st.markdown("---")
-        st.subheader("Raw Dispatch Data (Last 168 Hours)")
-        _cols = ["hour", "generation_mwh", "lmp", "grid_export_mwh", "grid_import_mwh",
-                 "mining_mw", "bess_charge_mwh", "bess_discharge_mwh",
-                 "bess_soc_mwh", "rev_mining", "rev_grid", "rev_import", "rev_bess", "rev_ancillary",
-                 "dispatch_mode"]
-        disp_display = dispatch_df.tail(168)[_cols].copy()
-        # Map timestamps: last 168 hours ending at current hour
-        _now = pd.Timestamp.now().floor("h")
-        _start = _now - pd.Timedelta(hours=167)
-        disp_display.insert(0, "timestamp", pd.date_range(_start, _now, freq="h").values)
-        disp_display.drop(columns=["hour"], inplace=True)
-        _nice_cols = [
-            "Timestamp", "Gen (MWh)", "LMP ($/MWh)", "Grid Exp (MWh)", "Grid Imp (MWh)",
+        st.subheader("Raw Dispatch Data (Sample — first 168 hours)")
+        disp_display = dispatch_df.head(168)[
+            ["hour", "generation_mwh", "lmp", "grid_export_mwh", "grid_import_mwh",
+             "mining_mw", "bess_charge_mwh", "bess_discharge_mwh",
+             "bess_soc_mwh", "rev_grid", "rev_import", "rev_bess", "rev_ancillary",
+             "dispatch_mode"]
+        ].copy()
+        disp_display.columns = [
+            "Hour", "Gen (MWh)", "LMP ($/MWh)", "Grid Exp (MWh)", "Grid Imp (MWh)",
             "Mining (MW)", "BESS Chg (MWh)", "BESS Dis (MWh)",
-            "SoC (MWh)", "Rev Mine ($)", "Rev Grid ($)", "Rev Import ($)", "Rev BESS ($)", "Rev Anc ($)",
+            "SoC (MWh)", "Rev Grid ($)", "Rev Import ($)", "Rev BESS ($)", "Rev Anc ($)",
             "Mode",
         ]
-        disp_display.columns = _nice_cols
-        # Totals row
-        _num_cols = [c for c in _nice_cols if c not in ("Timestamp", "Mode", "LMP ($/MWh)", "SoC (MWh)")]
-        _totals = {c: disp_display[c].sum() for c in _num_cols}
-        _totals["Timestamp"] = "TOTAL (168 h)"
-        _totals["Mode"] = ""
-        _totals["LMP ($/MWh)"] = disp_display["LMP ($/MWh)"].mean()
-        _totals["SoC (MWh)"] = disp_display["SoC (MWh)"].mean()
-        totals_row = pd.DataFrame([_totals], columns=_nice_cols)
-        disp_display = pd.concat([disp_display, totals_row], ignore_index=True)
 
         def color_mode(val):
             colors_map = {
@@ -1800,20 +1145,13 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
                     return v
             return ""
 
-        def _fmt_ts(x):
-            if isinstance(x, str):
-                return x
-            return x.strftime("%b %d %H:%M")
-
         st.dataframe(
             disp_display.style.format({
-                "Timestamp": _fmt_ts,
                 "Gen (MWh)": "{:.3f}", "LMP ($/MWh)": "${:.2f}",
                 "Grid Exp (MWh)": "{:.3f}", "Grid Imp (MWh)": "{:.3f}",
                 "Mining (MW)": "{:.3f}",
                 "BESS Chg (MWh)": "{:.3f}", "BESS Dis (MWh)": "{:.3f}",
-                "SoC (MWh)": "{:.3f}", "Rev Mine ($)": "${:.1f}",
-                "Rev Import ($)": "${:.1f}",
+                "SoC (MWh)": "{:.3f}", "Rev Import ($)": "${:.1f}",
                 "Rev Grid ($)": "${:.1f}", "Rev BESS ($)": "${:.1f}",
                 "Rev Anc ($)": "${:.2f}",
             }).applymap(color_mode, subset=["Mode"]),
@@ -1983,7 +1321,7 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
         # Final recommendation box
         st.markdown(f"""
 <div class="rec-box">
-<h4 style="color:#0EA5E9;margin-top:0">Final Recommendation</h4>
+<h4 style="color:#00D4FF;margin-top:0">📋 Final Recommendation</h4>
 
 Deploy <b>${budget / 1e6:.1f}M</b> across a <b>{inp['gen_type']}</b> hybrid site:
 
@@ -2011,414 +1349,6 @@ unlocks {iso} ancillary service revenue (${ancillary_premium:.2f}/MWh premium).*
 Annual ancillary revenue estimate: **${annual_rev_anc:,.0f}**
 *(= {bess_power_mw:.1f} MW × ${ancillary_premium:.2f}/MWh × 8,760 h × SoC availability factor)*
         """)
-
-    # ── TAB 5: SENSITIVITY ANALYSIS ──────────────────────────────────────
-    with tab5:
-        st.subheader("Sensitivity Analysis")
-        st.caption("How much does each input variable move the Blended IRR?")
-
-        with st.spinner("Running sensitivity sweeps (8 variables)..."):
-            sens_results, sens_base_irr = run_sensitivity(
-                inp=inp, iso=iso, gen_mwh=gen_mwh, lmp_mwh=lmp_mwh,
-                gen_data=gen_data, lmp_data=lmp_data,
-                budget=budget, itc_rate=itc_rate,
-                pack_key=pack_key, bess_split=bess_split,
-                ancillary_premium=ancillary_premium,
-                dsumm=dsumm, bess_n=bess_n, preset=preset,
-                bess_cost=bess_cost, miner_budget=miner_budget,
-                mining_th=mining_th, mine_power=mine_power,
-                be_price_mwh=be_price_mwh,
-                annual_rev_grid=annual_rev_grid,
-                annual_rev_bess=annual_rev_bess,
-                annual_rev_anc=annual_rev_anc,
-                annual_rev_import=annual_rev_import,
-                hybrid_irr_base=hybrid_irr,
-            )
-
-        st.plotly_chart(chart_tornado(sens_results, sens_base_irr),
-                        use_container_width=True)
-
-        st.markdown("---")
-        st.subheader("Sensitivity Detail")
-
-        sens_rows = []
-        for s in sorted(sens_results, key=lambda x: abs(x["high_irr"] - x["low_irr"]), reverse=True):
-            spread = abs(s["high_irr"] - s["low_irr"])
-            sens_rows.append({
-                "Variable": s["name"],
-                "Downside IRR": f"{s['low_irr'] * 100:.2f}%" if s["low_irr"] else "< 0%",
-                "Base IRR": f"{sens_base_irr * 100:.2f}%" if sens_base_irr else "N/A",
-                "Upside IRR": f"{s['high_irr'] * 100:.2f}%" if s["high_irr"] else "< 0%",
-                "Spread (pp)": f"{spread * 100:.1f}",
-            })
-        st.dataframe(pd.DataFrame(sens_rows), use_container_width=True, hide_index=True)
-
-        st.info(
-            "Variables are perturbed independently (one-at-a-time). "
-            "Sorted by total IRR spread. "
-            "Hashprice and hardware cost typically dominate for mining-heavy allocations."
-        )
-
-    # ── TAB 6: MULTI-SITE PORTFOLIO ──────────────────────────────────────
-    with tab6:
-        st.subheader("Multi-Site Portfolio")
-        st.caption("Save up to 3 site configurations and compare aggregate returns.")
-
-        # ── Save current site ────────────────────────────────────────────
-        portfolio = st.session_state.portfolio
-        can_save = len(portfolio) < 3
-
-        site_name_default = (
-            f"{inp['city']} {inp['gen_type']} {inp['capacity_mw']}MW"
-        )
-        col_name, col_btn = st.columns([3, 1])
-        with col_name:
-            site_label = st.text_input(
-                "Site name", value=site_name_default, key="portfolio_site_name",
-            )
-        with col_btn:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(
-                "Save Current Site" if can_save else "Portfolio Full (3/3)",
-                disabled=not can_save, use_container_width=True,
-            ):
-                site_dict = {
-                    "name": site_label,
-                    "inp": dict(inp),
-                    "pack_key": pack_key,
-                    "bess_split": bess_split,
-                    "itc_rate": itc_rate,
-                    "budget": budget,
-                    "results": {
-                        "hybrid_irr": dict(hybrid_irr),
-                        "total_annual_rev": total_annual_rev,
-                        "budget": budget,
-                        "bess_cost": bess_cost,
-                        "miner_budget": miner_budget,
-                        "mining_th": mining_th,
-                        "bess_n": bess_n,
-                        "irr_str": fmt_irr(hybrid_irr["irr"]),
-                        "npv": hybrid_irr["npv_8pct"],
-                        "payback": hybrid_irr["payback_years"],
-                        "annual_rev_grid": annual_rev_grid,
-                        "annual_rev_mine": annual_rev_mine,
-                        "annual_rev_bess": annual_rev_bess,
-                        "annual_rev_anc": annual_rev_anc,
-                    },
-                }
-                st.session_state.portfolio.append(site_dict)
-                st.rerun()
-
-        if not portfolio:
-            st.info(
-                "No sites saved yet. Configure a site using the sidebar, "
-                "then click **Save Current Site** to add it to the portfolio."
-            )
-        else:
-            st.markdown("---")
-
-            # ── Portfolio summary metrics ────────────────────────────────
-            total_capex = sum(s["results"]["budget"] for s in portfolio)
-            total_rev   = sum(s["results"]["total_annual_rev"] for s in portfolio)
-            # Weighted-average IRR by budget
-            irr_vals = []
-            for s in portfolio:
-                v = s["results"]["hybrid_irr"].get("irr")
-                if v is not None:
-                    irr_vals.append((v, s["results"]["budget"]))
-            if irr_vals:
-                wavg_irr = sum(v * w for v, w in irr_vals) / sum(w for _, w in irr_vals)
-                wavg_str = f"{wavg_irr * 100:.2f}%"
-            else:
-                wavg_str = "N/A"
-
-            pm1, pm2, pm3, pm4 = st.columns(4)
-            pm1.metric("Sites", f"{len(portfolio)} / 3")
-            pm2.metric("Total CapEx", f"${total_capex / 1e6:.1f}M")
-            pm3.metric("Wtd-Avg IRR", wavg_str)
-            pm4.metric("Total Annual Rev", f"${total_rev:,.0f}")
-
-            st.markdown("---")
-
-            # ── Site comparison table ────────────────────────────────────
-            st.subheader("Site Comparison")
-            comp_rows = []
-            for i, s in enumerate(portfolio):
-                r = s["results"]
-                comp_rows.append({
-                    "Site": s["name"],
-                    "Gen Type": s["inp"]["gen_type"],
-                    "Capacity (MW)": s["inp"]["capacity_mw"],
-                    "Budget ($M)": f"${r['budget'] / 1e6:.1f}M",
-                    "IRR": r["irr_str"],
-                    "NPV @ 8%": f"${r['npv']:,.0f}",
-                    "Payback (yrs)": str(r["payback"] or "N/A"),
-                    "Annual Rev": f"${r['total_annual_rev']:,.0f}",
-                    "Megapacks": r["bess_n"],
-                    "Mining TH": f"{r['mining_th']:,.0f}",
-                })
-            st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
-
-            # ── Remove buttons ───────────────────────────────────────────
-            st.caption("Remove a site:")
-            rm_cols = st.columns(len(portfolio))
-            for i, s in enumerate(portfolio):
-                with rm_cols[i]:
-                    if st.button(f"Remove: {s['name']}", key=f"rm_site_{i}"):
-                        st.session_state.portfolio.pop(i)
-                        st.rerun()
-
-            # ── Comparison charts ────────────────────────────────────────
-            if len(portfolio) >= 2:
-                st.markdown("---")
-                # Flatten for chart functions
-                irr_data = [
-                    {"name": s["name"], "irr": s["results"]["hybrid_irr"].get("irr")}
-                    for s in portfolio
-                ]
-                rev_data = [
-                    {
-                        "name": s["name"],
-                        "rev_grid": s["results"].get("annual_rev_grid", 0),
-                        "rev_mining": s["results"].get("annual_rev_mine", 0),
-                        "rev_bess": s["results"].get("annual_rev_bess", 0),
-                        "rev_ancillary": s["results"].get("annual_rev_anc", 0),
-                    }
-                    for s in portfolio
-                ]
-                col_pirr, col_prev = st.columns(2)
-                with col_pirr:
-                    st.plotly_chart(
-                        chart_portfolio_irr(irr_data),
-                        use_container_width=True,
-                    )
-                with col_prev:
-                    st.plotly_chart(
-                        chart_portfolio_revenue(rev_data),
-                        use_container_width=True,
-                    )
-
-
-    # ══════════════════════════════════════════════════════════════════════
-    # TAB 7 — LIVE CONTROL (Dispatch Control Service Dashboard)
-    # ══════════════════════════════════════════════════════════════════════
-
-    with tab7:
-        CONTROL_SERVICE_URL = os.environ.get("GRIDSTACK_CONTROL_URL", "http://localhost:8400")
-
-        st.subheader("Real-Time Dispatch Control")
-        st.caption(
-            "Monitor and control the live dispatch service. "
-            "Start the control service with: `uvicorn control_service.main:app --port 8400`"
-        )
-
-        _ctrl_connected = False
-        _ctrl_state = None
-        _ctrl_health = None
-
-        try:
-            import httpx as _httpx
-            _health_resp = _httpx.get(f"{CONTROL_SERVICE_URL}/health", timeout=3.0)
-            if _health_resp.status_code == 200:
-                _ctrl_health = _health_resp.json()
-                _ctrl_connected = True
-            _state_resp = _httpx.get(f"{CONTROL_SERVICE_URL}/state", timeout=3.0)
-            if _state_resp.status_code == 200:
-                _ctrl_state = _state_resp.json()
-        except Exception:
-            _ctrl_connected = False
-
-        if not _ctrl_connected:
-            st.warning(
-                "Control service is not running or unreachable at "
-                f"`{CONTROL_SERVICE_URL}`. Start it with:\n\n"
-                "```bash\nuvicorn control_service.main:app --port 8400\n```"
-            )
-
-            st.markdown("---")
-            st.markdown("### Configuration Reference")
-            st.markdown(
-                "The control service uses the same dispatch logic as the simulation above, "
-                "but runs in real-time against live LMP data and sends commands to hardware."
-            )
-
-            _ref_cols = st.columns(2)
-            with _ref_cols[0]:
-                st.markdown("**Supported Integrations**")
-                st.markdown(
-                    "- **Miners:** Foreman (foreman.mn) — sleep/wake/power control\n"
-                    "- **BESS:** REST API or MQTT — charge/discharge/idle\n"
-                    "- **LMP:** gridstatus.io real-time pricing"
-                )
-            with _ref_cols[1]:
-                st.markdown("**Architecture**")
-                st.markdown(
-                    "- FastAPI backend runs the dispatch loop every 5 min\n"
-                    "- This tab polls the service for monitoring\n"
-                    "- Manual overrides available when service is running\n"
-                    "- All commands logged to SQLite audit trail"
-                )
-        else:
-            # ── Connection status bar ────────────────────────────────────
-            _h = _ctrl_health or {}
-            _s = _ctrl_state or {}
-            _status_color = "🟢" if _h.get("loop_running") else "🟡"
-            _miner_dot = "🟢" if _h.get("miner_connected") else "🔴"
-            _bess_dot = "🟢" if _h.get("bess_connected") else "🔴"
-            _uptime_h = _h.get("uptime_seconds", 0) / 3600
-
-            _sc1, _sc2, _sc3, _sc4 = st.columns(4)
-            _sc1.metric("Service", f"{_status_color} {'Running' if _h.get('loop_running') else 'Idle'}")
-            _sc2.metric("Miners", f"{_miner_dot} {'Online' if _h.get('miner_connected') else 'Offline'}")
-            _sc3.metric("BESS", f"{_bess_dot} {'Online' if _h.get('bess_connected') else 'Offline'}")
-            _sc4.metric("Uptime", f"{_uptime_h:.1f} hrs")
-
-            st.markdown("---")
-
-            # ── Current dispatch ─────────────────────────────────────────
-            st.markdown("#### Current Dispatch")
-            _d1, _d2, _d3 = st.columns(3)
-            _d1.metric("Dispatch Mode", _s.get("dispatch_mode", "—"))
-            _d2.metric("Current LMP", f"${_s.get('current_lmp', 0):.2f}/MWh")
-            _d3.metric("Cycles", f"{_s.get('cycle_count', 0):,}")
-
-            # ── Hardware status ──────────────────────────────────────────
-            _hw1, _hw2 = st.columns(2)
-            with _hw1:
-                st.markdown("##### Miners")
-                _m1, _m2 = st.columns(2)
-                _m1.metric("Mode", _s.get("mining_mode", "—").upper())
-                _m2.metric("Power", f"{_s.get('mining_power_mw', 0):.1f} MW")
-            with _hw2:
-                st.markdown("##### BESS")
-                _b1, _b2, _b3 = st.columns(3)
-                _b1.metric("Mode", _s.get("bess_mode", "—").upper())
-                _b2.metric("SOC", f"{_s.get('bess_soc_pct', 0):.0f}%")
-                _b3.metric("Power", f"{_s.get('bess_power_mw', 0):.1f} MW")
-
-            # ── Grid flow ────────────────────────────────────────────────
-            _g1, _g2 = st.columns(2)
-            _g1.metric("Grid Export", f"{_s.get('grid_export_mw', 0):.1f} MW")
-            _g2.metric("Grid Import", f"{_s.get('grid_import_mw', 0):.1f} MW")
-
-            # ── Alerts ───────────────────────────────────────────────────
-            _alerts = _s.get("alerts", [])
-            if _alerts:
-                for _a in _alerts:
-                    st.warning(_a)
-
-            st.markdown("---")
-
-            # ── 24h dispatch history chart ───────────────────────────────
-            try:
-                _hist_resp = _httpx.get(f"{CONTROL_SERVICE_URL}/history?hours=24", timeout=5.0)
-                if _hist_resp.status_code == 200:
-                    _hist = _hist_resp.json().get("entries", [])
-                    if _hist:
-                        import plotly.graph_objects as go
-                        _hdf = pd.DataFrame(_hist)
-                        _hdf["timestamp"] = pd.to_datetime(_hdf["timestamp"])
-
-                        _fig = go.Figure()
-                        _fig.add_trace(go.Scatter(
-                            x=_hdf["timestamp"], y=_hdf["lmp"],
-                            name="LMP ($/MWh)", yaxis="y2",
-                            line=dict(color="orange", width=2),
-                        ))
-                        _fig.add_trace(go.Bar(
-                            x=_hdf["timestamp"], y=_hdf["mining_mw"],
-                            name="Mining (MW)", marker_color="#f7931a",
-                        ))
-                        _fig.add_trace(go.Bar(
-                            x=_hdf["timestamp"], y=_hdf["bess_charge_mw"],
-                            name="BESS Charge (MW)", marker_color="#00d4aa",
-                        ))
-                        _fig.add_trace(go.Bar(
-                            x=_hdf["timestamp"], y=-_hdf["bess_discharge_mw"],
-                            name="BESS Discharge (MW)", marker_color="#ff6b6b",
-                        ))
-                        _fig.update_layout(
-                            title="24-Hour Dispatch Timeline",
-                            barmode="relative",
-                            yaxis=dict(title="Power (MW)"),
-                            yaxis2=dict(title="LMP ($/MWh)", overlaying="y", side="right"),
-                            height=400,
-                            template="plotly_dark",
-                        )
-                        st.plotly_chart(_fig, use_container_width=True)
-                    else:
-                        st.info("No dispatch history yet. Start the loop to begin collecting data.")
-            except Exception:
-                pass
-
-            # ── Manual override controls ─────────────────────────────────
-            with st.expander("Manual Override Controls", expanded=False):
-                _ov1, _ov2 = st.columns(2)
-                with _ov1:
-                    _miner_ov = st.radio(
-                        "Miner Mode",
-                        ["auto", "high", "low", "sleep"],
-                        horizontal=True,
-                        key="ctrl_miner_ov",
-                    )
-                with _ov2:
-                    _bess_ov = st.radio(
-                        "BESS Mode",
-                        ["auto", "charge", "discharge", "idle"],
-                        horizontal=True,
-                        key="ctrl_bess_ov",
-                    )
-
-                _ov_btn1, _ov_btn2, _ov_btn3 = st.columns(3)
-                with _ov_btn1:
-                    if st.button("Apply Override", type="primary", use_container_width=True):
-                        try:
-                            _httpx.post(
-                                f"{CONTROL_SERVICE_URL}/override",
-                                json={"miner_mode": _miner_ov, "bess_mode": _bess_ov},
-                                timeout=5.0,
-                            )
-                            st.success("Override applied.")
-                        except Exception as _e:
-                            st.error(f"Failed: {_e}")
-                with _ov_btn2:
-                    if st.button("Clear Override", use_container_width=True):
-                        try:
-                            _httpx.post(
-                                f"{CONTROL_SERVICE_URL}/override",
-                                json={"miner_mode": "auto", "bess_mode": "auto"},
-                                timeout=5.0,
-                            )
-                            st.success("Override cleared.")
-                        except Exception as _e:
-                            st.error(f"Failed: {_e}")
-                with _ov_btn3:
-                    _loop_running = _h.get("loop_running", False)
-                    if _loop_running:
-                        if st.button("Stop Loop", use_container_width=True):
-                            _httpx.post(f"{CONTROL_SERVICE_URL}/stop", timeout=5.0)
-                            st.rerun()
-                    else:
-                        if st.button("Start Loop", type="primary", use_container_width=True):
-                            _httpx.post(f"{CONTROL_SERVICE_URL}/start", timeout=5.0)
-                            st.rerun()
-
-            # ── Audit log ────────────────────────────────────────────────
-            with st.expander("Audit Log (last 20 commands)", expanded=False):
-                try:
-                    _audit_resp = _httpx.get(f"{CONTROL_SERVICE_URL}/audit?limit=20", timeout=5.0)
-                    if _audit_resp.status_code == 200:
-                        _audit_data = _audit_resp.json()
-                        if _audit_data:
-                            st.dataframe(
-                                pd.DataFrame(_audit_data),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
-                        else:
-                            st.info("No audit entries yet.")
-                except Exception:
-                    st.info("Could not fetch audit log.")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

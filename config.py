@@ -286,3 +286,10 @@ WIND_DEGRADATION  = 0.003       # 0.3%/yr turbine output degradation
 MINER_OM_RATE = 0.02            # 2% of hardware cost per year
 DC_AC_RATIO_SOLAR = 1.25        # Typical solar DC/AC oversizing
 PROJECT_LIFE_YEARS = 25
+
+# ─── Control Service Defaults ────────────────────────────────────────────────
+CONTROL_SERVICE_PORT = 8400
+DISPATCH_INTERVAL_SECONDS = 300         # 5 minutes
+SAFETY_MAX_CONSECUTIVE_FAILURES = 3
+SAFETY_FAILSAFE_MINER_MODE = "sleep"
+SAFETY_FAILSAFE_BESS_MODE = "idle"

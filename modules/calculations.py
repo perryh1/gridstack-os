@@ -113,6 +113,154 @@ def generation_revenue_table(
     return pd.DataFrame(rows)
 
 
+# ─── Single-Step Dispatch Decision ───────────────────────────────────────────
+
+def dispatch_single_step(
+    generation_mw: float,
+    lmp: float,
+    break_even_mwh: float,
+    bess_soc_mwh: float,
+    bess_power_mw: float,
+    bess_energy_mwh: float,
+    mining_power_mw_cap: float,
+    interconnection_mw: float,
+    rte: float,
+    future_lmp_avg: float,
+    ancillary_premium: float,
+    grid_tied: bool = True,
+    dc_extra_mw: float = 0.0,
+) -> dict:
+    """
+    Execute one dispatch decision cycle.
+
+    Pure function: takes current state, returns dispatch signals and new SOC.
+    Used by both the 8760-hour batch simulation and the real-time control loop.
+
+    Returns dict with keys:
+        mining_mw, bess_charge_mw, bess_discharge_mw,
+        grid_export_mw, grid_import_mw, dispatch_mode,
+        new_soc_mwh, rev_grid, rev_import, rev_bess, rev_ancillary
+    """
+    soc         = bess_soc_mwh
+    total_avail = generation_mw + dc_extra_mw
+
+    grid_exp = 0.0
+    grid_imp = 0.0
+    mine_mw  = 0.0
+    bess_chg = 0.0
+    bess_dis = 0.0
+    mode     = ""
+
+    # ── Rule 1: Negative LMP ─────────────────────────────────────────
+    if lmp < 0:
+        mode = "Negative LMP"
+        chg_cap = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
+
+        if grid_tied:
+            total_wanted  = chg_cap + mining_power_mw_cap
+            total_sourced = min(total_wanted, total_avail + interconnection_mw)
+            bess_chg      = min(chg_cap, total_sourced)
+            soc           = min(soc + bess_chg * rte, bess_energy_mwh)
+            remaining     = total_sourced - bess_chg
+            mine_mw       = min(mining_power_mw_cap, remaining)
+            grid_imp      = max(0.0, (bess_chg + mine_mw) - total_avail)
+        else:
+            bess_chg  = min(chg_cap, total_avail)
+            soc       = min(soc + bess_chg * rte, bess_energy_mwh)
+            remaining = total_avail - bess_chg
+            mine_mw   = min(mining_power_mw_cap, remaining)
+
+    # ── Rule 2: Below break-even (0 ≤ LMP < break_even) ─────────────
+    elif lmp < break_even_mwh:
+        discharge_threshold = break_even_mwh * 0.70
+        discharge_incentive = (
+            grid_tied
+            and soc > bess_energy_mwh * 0.20
+            and lmp > discharge_threshold
+            and lmp > future_lmp_avg * 0.90
+        )
+        charge_incentive = (
+            soc < bess_energy_mwh * 0.80
+            and future_lmp_avg > break_even_mwh * 1.1
+        )
+
+        if discharge_incentive:
+            mode     = "Below Break-Even → Mine + Discharge"
+            dis_cap  = min(bess_power_mw, soc)
+            bess_dis = dis_cap
+            soc      = max(0.0, soc - bess_dis)
+            grid_exp = min(interconnection_mw, bess_dis)
+            if grid_tied:
+                mine_mw  = min(mining_power_mw_cap, total_avail + interconnection_mw - grid_exp)
+                grid_imp = max(0.0, mine_mw - total_avail)
+            else:
+                mine_mw  = min(mining_power_mw_cap, total_avail)
+        elif charge_incentive:
+            mode     = "Below Break-Even → Charge BESS"
+            chg_cap  = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
+            bess_chg = min(chg_cap, total_avail)
+            soc      = min(soc + bess_chg * rte, bess_energy_mwh)
+            remaining = total_avail - bess_chg
+            if grid_tied:
+                mine_mw  = min(mining_power_mw_cap, remaining + interconnection_mw)
+                grid_imp = max(0.0, mine_mw - remaining)
+            else:
+                mine_mw = min(mining_power_mw_cap, remaining)
+        else:
+            mode = "Below Break-Even → Mine"
+            if grid_tied:
+                mine_mw  = min(mining_power_mw_cap, total_avail + interconnection_mw)
+                grid_imp = max(0.0, mine_mw - total_avail)
+            else:
+                mine_mw  = min(mining_power_mw_cap, total_avail)
+            remaining = max(0.0, total_avail - mine_mw)
+            chg_cap   = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
+            bess_chg  = min(chg_cap, remaining)
+            soc       = min(soc + bess_chg * rte, bess_energy_mwh)
+
+    # ── Rule 3: Above break-even ──────────────────────────────────────
+    else:
+        if grid_tied:
+            mode     = "Above Break-Even → Export + Discharge"
+            dis_cap  = min(bess_power_mw, soc)
+            bess_dis = dis_cap
+            soc      = max(0.0, soc - bess_dis)
+            gen_export  = min(interconnection_mw, generation_mw)
+            bess_export = min(interconnection_mw - gen_export, bess_dis)
+            grid_exp    = gen_export + bess_export
+            surplus     = max(0.0, generation_mw - gen_export)
+            mine_mw     = min(mining_power_mw_cap, surplus)
+        else:
+            mode     = "BTM — Charge/Curtail"
+            dis_cap  = min(bess_power_mw, soc)
+            bess_dis = dis_cap
+            soc      = max(0.0, soc - bess_dis)
+            chg_cap  = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
+            bess_chg = min(chg_cap, max(0.0, total_avail - bess_dis))
+            soc      = min(soc + bess_chg * rte, bess_energy_mwh)
+
+    # ── Revenue calculations ──────────────────────────────────────────
+    gen_exported  = min(grid_exp, generation_mw) if bess_dis > 0 else grid_exp
+    rev_grid      = max(0.0, gen_exported * lmp)
+    rev_bess      = bess_dis * max(0.0, lmp)
+    rev_ancillary = bess_power_mw * ancillary_premium if soc > bess_energy_mwh * 0.20 else 0.0
+    rev_import    = grid_imp * (-lmp)
+
+    return {
+        "mining_mw":        mine_mw,
+        "bess_charge_mw":   bess_chg,
+        "bess_discharge_mw": bess_dis,
+        "grid_export_mw":   grid_exp,
+        "grid_import_mw":   grid_imp,
+        "dispatch_mode":    mode,
+        "new_soc_mwh":      soc,
+        "rev_grid":         rev_grid,
+        "rev_import":       rev_import,
+        "rev_bess":         rev_bess,
+        "rev_ancillary":    rev_ancillary,
+    }
+
+
 # ─── Synergy Dispatch Simulation ─────────────────────────────────────────────
 
 def simulate_synergy_dispatch(
@@ -131,30 +279,17 @@ def simulate_synergy_dispatch(
     """
     Implements the Synergy Priority Logic hour-by-hour over 8760 hours.
 
+    Delegates each hour's decision to dispatch_single_step() for consistency
+    with the real-time control loop.
+
     Grid-Tied vs Behind-the-Meter (BTM):
       Grid-Tied:
         - Export surplus to grid at LMP (Rule 3).
         - Import cheap grid power to run miners when LMP < break-even (Rule 2).
-          This is the key night-time mode for solar sites — miners run 24/7
-          whenever grid electricity is cheaper than the mining break-even price.
         - Import at negative LMP to charge BESS and mine — grid pays YOU (Rule 1).
-
       Behind-the-Meter (BTM):
         - No grid export, no grid import.
         - Miners and BESS can only consume on-site generation.
-        - Mining revenue limited to hours when gen > 0.
-
-    Priority Rules (Grid-Tied):
-      1. LMP < 0:         Import + local gen → fill BESS → mine remainder.
-                          Grid PAYS you for importing (negative LMP).
-      2. 0 ≤ LMP < BE:    Mine at full capacity, importing from grid to fill
-                          any shortfall from local generation. BESS charges
-                          from remaining gen if future prices are favourable.
-      3. LMP ≥ BE:        Discharge BESS → export to grid. No import (unprofitable).
-
-    Priority Rules (BTM):
-      Same as Grid-Tied Rules 1–2 but capped to local generation (no import).
-      Rule 3: no grid export — all excess gen goes to BESS or is curtailed.
     """
     if dc_avail_mwh is None:
         dc_avail_mwh = np.zeros(len(gen_mwh))
@@ -167,13 +302,13 @@ def simulate_synergy_dispatch(
         "generation_mwh":     gen_mwh.copy(),
         "lmp":                lmp_mwh.copy(),
         "grid_export_mwh":    np.zeros(n),
-        "grid_import_mwh":    np.zeros(n),   # NEW — power imported from grid
+        "grid_import_mwh":    np.zeros(n),
         "mining_mw":          np.zeros(n),
         "bess_charge_mwh":    np.zeros(n),
         "bess_discharge_mwh": np.zeros(n),
         "bess_soc_mwh":       np.zeros(n),
         "rev_grid":           np.zeros(n),
-        "rev_import":         np.zeros(n),   # NEW — net revenue from grid imports
+        "rev_import":         np.zeros(n),
         "rev_mining":         np.zeros(n),
         "rev_bess":           np.zeros(n),
         "rev_ancillary":      np.zeros(n),
@@ -183,151 +318,36 @@ def simulate_synergy_dispatch(
     lmp_future = np.convolve(lmp_mwh, np.ones(12) / 12, mode="same")
 
     for i in range(n):
-        gen         = float(gen_mwh[i])
-        dc_ex       = float(dc_avail_mwh[i])
-        lmp         = float(lmp_mwh[i])
-        total_avail = gen + dc_ex
-
-        grid_exp    = 0.0
-        grid_imp    = 0.0
-        mine_mw     = 0.0
-        bess_chg    = 0.0
-        bess_dis    = 0.0
-        mode        = ""
-
-        # ── Rule 1: Negative LMP ─────────────────────────────────────────
-        # Grid is paying to offload surplus — take as much as possible.
-        if lmp < 0:
-            mode = "Negative LMP"
-            chg_cap  = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
-
-            if grid_tied:
-                # Import enough to fill BESS AND run miners at full capacity,
-                # limited by interconnection. Grid pays you for all of it.
-                total_wanted  = chg_cap + mining_power_mw
-                total_sourced = min(total_wanted, total_avail + interconnection_mw)
-                bess_chg      = min(chg_cap, total_sourced)
-                soc           = min(soc + bess_chg * rte, bess_energy_mwh)
-                remaining     = total_sourced - bess_chg
-                mine_mw       = min(mining_power_mw, remaining)
-                grid_imp      = max(0.0, (bess_chg + mine_mw) - total_avail)
-            else:
-                bess_chg  = min(chg_cap, total_avail)
-                soc       = min(soc + bess_chg * rte, bess_energy_mwh)
-                remaining = total_avail - bess_chg
-                mine_mw   = min(mining_power_mw, remaining)
-
-        # ── Rule 2: Below break-even (0 ≤ LMP < break_even) ─────────────
-        # Mining is profitable — run at full capacity.
-        # Grid-Tied: import the shortfall from the grid (night-time mining).
-        elif lmp < break_even_mwh:
-            future_lmp = lmp_future[min(i + 6, n - 1)]
-            # Discharge BESS when LMP is in the upper band — capture arb spread
-            # even though mining is still profitable from grid power.
-            discharge_threshold = break_even_mwh * 0.70  # discharge above 70% of BE
-            discharge_incentive = (
-                grid_tied
-                and soc > bess_energy_mwh * 0.20
-                and lmp > discharge_threshold
-                and lmp > lmp_future[min(i + 6, n - 1)] * 0.90  # near local peak
-            )
-            charge_incentive = (
-                soc < bess_energy_mwh * 0.80
-                and future_lmp > break_even_mwh * 1.1
-            )
-
-            if discharge_incentive:
-                # Discharge BESS to grid while miners run on gen + imports
-                mode     = "Below Break-Even → Mine + Discharge"
-                dis_cap  = min(bess_power_mw, soc)
-                bess_dis = dis_cap
-                soc      = max(0.0, soc - bess_dis)
-                # Export BESS discharge to grid
-                grid_exp = min(interconnection_mw, bess_dis)
-                # Mine at full capacity from gen + grid import
-                if grid_tied:
-                    mine_mw  = min(mining_power_mw, total_avail + interconnection_mw - grid_exp)
-                    grid_imp = max(0.0, mine_mw - total_avail)
-                else:
-                    mine_mw  = min(mining_power_mw, total_avail)
-            elif charge_incentive:
-                mode     = "Below Break-Even → Charge BESS"
-                chg_cap  = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
-                bess_chg = min(chg_cap, total_avail)
-                soc      = min(soc + bess_chg * rte, bess_energy_mwh)
-                remaining = total_avail - bess_chg
-                if grid_tied:
-                    # Mine at full capacity — import what gen doesn't cover
-                    mine_mw  = min(mining_power_mw, remaining + interconnection_mw)
-                    grid_imp = max(0.0, mine_mw - remaining)
-                else:
-                    mine_mw = min(mining_power_mw, remaining)
-            else:
-                mode = "Below Break-Even → Mine"
-                if grid_tied:
-                    # Fill mining capacity from gen + grid import
-                    mine_mw  = min(mining_power_mw, total_avail + interconnection_mw)
-                    grid_imp = max(0.0, mine_mw - total_avail)
-                else:
-                    mine_mw  = min(mining_power_mw, total_avail)
-                remaining = max(0.0, total_avail - mine_mw)
-                chg_cap   = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
-                bess_chg  = min(chg_cap, remaining)
-                soc       = min(soc + bess_chg * rte, bess_energy_mwh)
-
-        # ── Rule 3: Above break-even ──────────────────────────────────────
-        # Mining from grid would be unprofitable. Export/discharge instead.
-        else:
-            if grid_tied:
-                mode     = "Above Break-Even → Export + Discharge"
-                dis_cap  = min(bess_power_mw, soc)
-                bess_dis = dis_cap
-                soc      = max(0.0, soc - bess_dis)
-                # Export generation to grid (separate from BESS discharge)
-                gen_export = min(interconnection_mw, gen)
-                # BESS discharge also exported (remaining interconnection capacity)
-                bess_export = min(interconnection_mw - gen_export, bess_dis)
-                grid_exp    = gen_export + bess_export
-                surplus     = max(0.0, gen - gen_export)
-                mine_mw     = min(mining_power_mw, surplus)
-            else:
-                # BTM: no export. Charge BESS from surplus or curtail.
-                mode     = "BTM — Charge/Curtail"
-                dis_cap  = min(bess_power_mw, soc)
-                bess_dis = dis_cap
-                soc      = max(0.0, soc - bess_dis)
-                # Use gen + discharge on-site (miners paused — unprofitable at LMP ≥ BE)
-                chg_cap  = min(bess_power_mw, (bess_energy_mwh - soc) / rte)
-                bess_chg = min(chg_cap, max(0.0, total_avail - bess_dis))
-                soc      = min(soc + bess_chg * rte, bess_energy_mwh)
-
-        # ── Revenue calculations ──────────────────────────────────────────
-        # Grid export revenue: only from generation (not BESS discharge)
-        gen_exported = min(grid_exp, gen) if bess_dis > 0 else grid_exp
-        rev_grid     = max(0.0, gen_exported * lmp)
-        # BESS discharge revenue: separate from grid export
-        rev_bess     = bess_dis * max(0.0, lmp)
-        # Ancillary capacity payment: $/MWh × MW × 1 hr = $/hr earned while BESS is available
-        # (SOC > 20% means the BESS can respond to dispatch calls)
-        rev_ancillary = (
-            bess_power_mw * ancillary_premium
-            if soc > bess_energy_mwh * 0.20 else 0.0
+        result = dispatch_single_step(
+            generation_mw=float(gen_mwh[i]),
+            lmp=float(lmp_mwh[i]),
+            break_even_mwh=break_even_mwh,
+            bess_soc_mwh=soc,
+            bess_power_mw=bess_power_mw,
+            bess_energy_mwh=bess_energy_mwh,
+            mining_power_mw_cap=mining_power_mw,
+            interconnection_mw=interconnection_mw,
+            rte=rte,
+            future_lmp_avg=float(lmp_future[min(i + 6, n - 1)]),
+            ancillary_premium=ancillary_premium,
+            grid_tied=grid_tied,
+            dc_extra_mw=float(dc_avail_mwh[i]),
         )
-        # Grid import revenue: negative LMP = grid pays you (positive); positive LMP = cost (negative)
-        rev_import  = grid_imp * (-lmp)   # positive when lmp<0 (income), negative when lmp>0 (cost)
 
-        cols["grid_export_mwh"][i]    = grid_exp
-        cols["grid_import_mwh"][i]    = grid_imp
-        cols["mining_mw"][i]          = mine_mw
-        cols["bess_charge_mwh"][i]    = bess_chg
-        cols["bess_discharge_mwh"][i] = bess_dis
+        soc = result["new_soc_mwh"]
+
+        cols["grid_export_mwh"][i]    = result["grid_export_mw"]
+        cols["grid_import_mwh"][i]    = result["grid_import_mw"]
+        cols["mining_mw"][i]          = result["mining_mw"]
+        cols["bess_charge_mwh"][i]    = result["bess_charge_mw"]
+        cols["bess_discharge_mwh"][i] = result["bess_discharge_mw"]
         cols["bess_soc_mwh"][i]       = soc
-        cols["rev_grid"][i]           = rev_grid
-        cols["rev_import"][i]         = rev_import
+        cols["rev_grid"][i]           = result["rev_grid"]
+        cols["rev_import"][i]         = result["rev_import"]
         cols["rev_mining"][i]         = 0.0   # aggregated at portfolio level
-        cols["rev_bess"][i]           = rev_bess
-        cols["rev_ancillary"][i]      = rev_ancillary
-        cols["dispatch_mode"][i]      = mode
+        cols["rev_bess"][i]           = result["rev_bess"]
+        cols["rev_ancillary"][i]      = result["rev_ancillary"]
+        cols["dispatch_mode"][i]      = result["dispatch_mode"]
 
     return pd.DataFrame(cols)
 
