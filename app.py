@@ -8,47 +8,64 @@ Built on Streamlit 1.32+ | Python 3.11+
 # ── Page config MUST be the very first Streamlit call ────────────────────────
 import streamlit as st
 
-st.set_page_config(
-    page_title="GridStack OS",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(layout="wide", initial_sidebar_state="expanded")
 
 import numpy as np
 import pandas as pd
-import sys, os
+import os
 import re as _re_std
 import urllib.request, ssl as _ssl
 from datetime import date as _date
 from fpdf import FPDF
 
-sys.path.insert(0, os.path.dirname(__file__))
-
 # ── Password gate ────────────────────────────────────────────────────────────
 def _check_password():
     """Return True if the user has entered the correct password."""
-    correct_pw = st.secrets.get("APP_PASSWORD", "")
+    correct_pw = os.environ.get("APP_PASSWORD") or st.secrets.get("APP_PASSWORD", "")
     if not correct_pw:
-        return True                       # no password configured → open access
+        return True
 
     if st.session_state.get("authenticated"):
         return True
 
-    st.markdown(
-        "<h1 style='text-align:center;margin-top:15vh'>⚡ GridStack OS</h1>"
-        "<p style='text-align:center;color:grey'>Hybrid BTC Mining + BESS Site Modeler</p>",
-        unsafe_allow_html=True,
-    )
-    with st.form("login_form"):
-        pw = st.text_input("Password", type="password", placeholder="Enter access password")
-        submitted = st.form_submit_button("Log in", use_container_width=True)
-    if submitted:
-        if pw == correct_pw:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        st.markdown("# GridStack OS")
+        st.markdown("#### Hybrid BTC Mining + BESS Techno-Economic Modeling & Control")
+        st.markdown("---")
+        st.markdown(
+            "**GridStack OS** is a production-grade platform for modeling and operating "
+            "hybrid Bitcoin mining + battery energy storage (BESS) sites on deregulated "
+            "electricity markets. It combines:"
+        )
+        st.markdown(
+            "- **8,760-hour dispatch simulation** using Synergy Priority Logic across "
+            "solar, wind, and hybrid generation assets\n"
+            "- **Real-time autonomous control** with 5-minute dispatch cycles, hardware "
+            "adapters (Foreman for miners, REST/MQTT for BESS), and safety monitoring\n"
+            "- **Three-scenario financial analysis** comparing miners-only, BESS-only, "
+            "and hybrid strategies with 25-year IRR/NPV projections\n"
+            "- **ITC tax credit modeling** (30-60%) on BESS capital expenditure\n"
+            "- **Multi-site portfolio comparison** across all US grid regions and ISOs"
+        )
+        st.info(
+            "**A note on BESS pricing:** This model uses Tesla Megapack pricing as a "
+            "conservative benchmark since they are among the most expensive BESS options "
+            "on the market. Megapacks are AC-coupled and grid-tied, which makes them less "
+            "than ideal for behind-the-meter or DC-coupled applications. In a real deployment, "
+            "purpose-built BESS solutions would likely be used at lower cost, meaning actual "
+            "returns should exceed what this model projects."
+        )
+        st.markdown("---")
+        with st.form("login_form"):
+            pw = st.text_input("Enter password to continue", type="password")
+            submitted = st.form_submit_button("Log in", use_container_width=True)
+        if submitted:
+            if pw == correct_pw:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
     st.stop()
 
 if not _check_password():
@@ -1280,7 +1297,7 @@ specific site configuration.
     # ══════════════════════════════════════════════════════════════════════
     # PHASE 4: Create 6 tabs
     # ══════════════════════════════════════════════════════════════════════
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Executive Summary",
         "Site & Generation",
         "Dispatch & Operations",
@@ -1288,6 +1305,7 @@ specific site configuration.
         "Sensitivity",
         "Portfolio",
         "Live Control",
+        "How It Works",
     ])
 
     # ══════════════════════════════════════════════════════════════════════
@@ -2628,6 +2646,114 @@ GRIDSTACK_SAFETY_MIN_SOC_PCT=5.0
 GRIDSTACK_SAFETY_MAX_SOC_PCT=98.0
 ```
 """)
+
+
+    # ── Tab 8: How It Works ─────────────────────────────────────────────────
+    with tab8:
+        st.header("How GridStack OS Works")
+
+        st.subheader("The Opportunity")
+        st.markdown(
+            "Renewable generation sites (solar, wind, hybrid) produce power at variable "
+            "rates throughout the day. Wholesale electricity prices (LMP) fluctuate "
+            "hourly, sometimes going negative when supply exceeds demand. GridStack OS "
+            "optimizes revenue by dynamically routing electrons to their highest-value use."
+        )
+
+        st.subheader("The GridStack Solution")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.markdown(
+                "**Bitcoin Mining**\n"
+                "- Absorbs cheap/negative-price power\n"
+                "- Scales instantly (sleep/low/high modes)\n"
+                "- Profitable when LMP < mining break-even\n"
+                "- Converts stranded electrons to BTC revenue"
+            )
+        with col_b:
+            st.markdown(
+                "**BESS (modeled with Megapack pricing)**\n"
+                "- Charges when LMP is low\n"
+                "- Discharges at peak LMP for arbitrage\n"
+                "- Earns ancillary service revenue\n"
+                "- Eligible for 30-60% federal ITC"
+            )
+            st.caption(
+                "Note: Tesla Megapacks are used as a conservative pricing benchmark. "
+                "They are AC-coupled and grid-tied. Real deployments would likely use "
+                "lower-cost DC-coupled BESS, improving returns."
+            )
+        with col_c:
+            st.markdown(
+                "**Grid Export**\n"
+                "- Sells surplus generation at market LMP\n"
+                "- Respects interconnection limits\n"
+                "- Grid-tied vs behind-the-meter modes\n"
+                "- Revenue maximized at peak hours"
+            )
+
+        st.subheader("Synergy Priority Logic (SPL)")
+        st.markdown(
+            "Each hour, the dispatch engine applies a three-rule priority hierarchy:"
+        )
+        st.markdown(
+            "| LMP Condition | Action | Economic Logic |\n"
+            "|--------------|--------|----------------|\n"
+            "| **Negative** (LMP < $0) | Max charge BESS + max mine | Grid pays you to consume |\n"
+            "| **Below break-even** (0 < LMP < BE) | Mine with cheap power, strategically charge BESS | Power costs less than mining revenue |\n"
+            "| **Above break-even** (LMP > BE) | Export generation + discharge BESS | Selling power is more valuable than mining |"
+        )
+
+        st.subheader("Two Operating Modes")
+        st.markdown("##### Strategic Planning (This Dashboard)")
+        st.markdown(
+            "- Full 8,760-hour (1 year) dispatch simulation\n"
+            "- Three-scenario comparison: Miners-only, BESS-only, Hybrid\n"
+            "- 25-year financial projections with ITC credits\n"
+            "- Sensitivity analysis on 5+ variables\n"
+            "- Multi-site portfolio comparison"
+        )
+        st.markdown("##### Real-Time Control (Live Control Tab)")
+        st.markdown(
+            "- Autonomous 5-minute dispatch cycles via FastAPI service\n"
+            "- Live LMP feed from GridStatus API\n"
+            "- Hardware integration: Foreman (miners), REST/MQTT (BESS)\n"
+            "- Safety watchdog with failsafe modes (sleep miners, idle BESS)\n"
+            "- SQLite audit log for every dispatch command\n"
+            "- Manual override capability from the dashboard"
+        )
+
+        st.subheader("Generation Types")
+        st.markdown(
+            "| Type | Profile | Best For |\n"
+            "|------|---------|----------|\n"
+            "| **Solar** | Peak midday, zero at night | High-LMP daytime markets (CAISO, ERCOT) |\n"
+            "| **Wind** | Stronger at night, seasonal variation | Off-peak mining, portfolio diversification |\n"
+            "| **Hybrid** | Blended solar + wind | Smoother generation curve, higher capacity factor |"
+        )
+
+        st.subheader("Key Assumptions")
+        st.markdown(
+            "- BESS round-trip efficiency: 92% | Degradation: 2%/year (floor at 75%)\n"
+            "- Solar degradation: 0.5%/year | Wind degradation: 0.3%/year\n"
+            "- LMP from GridStatus API or synthetic ISO-specific profiles\n"
+            "- Mining hashprice and efficiency held constant across 25-year projection\n"
+            "- ITC credit applied as Year 0 capex offset\n"
+            "- Interconnection limits enforced on all grid export"
+        )
+
+        st.subheader("Tab Guide")
+        st.markdown(
+            "| Tab | What It Shows | Who It's For |\n"
+            "|-----|--------------|---------------|\n"
+            "| Executive Summary | Key metrics, recommended strategy, PDF export | Investors, executives |\n"
+            "| Site & Generation | 72-hour profiles, annual heatmaps, generation revenue | Engineers, site planners |\n"
+            "| Dispatch & Operations | SPL simulation, mode breakdown, BESS cycling | Engineers, operators |\n"
+            "| Financials & Allocation | 3-scenario IRR/NPV, cash flow, capital split | Investors, finance |\n"
+            "| Sensitivity | Tornado chart of key variables vs Hybrid IRR | Analysts, risk teams |\n"
+            "| Portfolio | Save and compare multiple site configurations | BD, site selection |\n"
+            "| Live Control | Real-time dispatch service, API docs, hardware status | Operations, engineering |"
+        )
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
