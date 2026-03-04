@@ -1607,10 +1607,10 @@ ITC saves ${itc_savings_bess / 1e6:.2f}M.
             "Avg LMP ($/MWh)":                   "${:.2f}",
             "Hours Curtailed":                    "{:,}",
             "Revenue Lost — Neg. Pricing ($)":    "${:,.0f}",
-        }).background_gradient(
-            subset=["Revenue ($)"], cmap="Greens"
-        ).background_gradient(
-            subset=["Revenue Lost — Neg. Pricing ($)"], cmap="Reds"
+        }).bar(
+            subset=["Revenue ($)"], color="#c6efce"
+        ).bar(
+            subset=["Revenue Lost — Neg. Pricing ($)"], color="#ffc7ce"
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
